@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SuperJob Sales Trainer</title>
+  <link rel="stylesheet" href="src/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="mark">SJ</span><div><b>SuperJob</b><small>Sales Trainer</small></div></div>
+    <div class="user">Демо-режим <span class="avatar">М</span></div>
+  </header>
+  <main class="wrap">
+    <section class="intro">
+      <p class="eyebrow">ТРЕНАЖЁР ПЕРЕГОВОРОВ</p>
+      <h1>Тренируй сложные разговоры<br>с работодателями</h1>
+      <p class="lead">Выбери ситуацию, поговори с виртуальным клиентом и получи разбор по методологии SuperJob.</p>
+    </section>
+    <section id="home" class="panel">
+      <div class="section-head"><div><h2>Выбери сценарий</h2><p>В первой версии доступны пять учебных ситуаций</p></div><span class="tag">5 сценариев</span></div>
+      <div id="scenarios" class="scenarios"></div>
+    </section>
+    <section id="practice" class="panel hidden">
+      <button class="back" id="back">← Все сценарии</button>
+      <div class="scenario-title"><span class="tag" id="difficulty">Практика</span><h2 id="scenarioName"></h2><p id="scenarioBrief"></p></div>
+      <div class="client"><div class="client-avatar">Р</div><div><b>Работодатель</b><small id="clientMood">Настроен скептически</small></div><span class="live">● Ролевая ситуация</span></div>
+      <div class="dialog" id="dialog"><div class="bubble client-bubble" id="opening"></div></div>
+      <div class="composer">
+        <textarea id="reply" rows="2" placeholder="Напиши ответ менеджера для демонстрации диалога..."></textarea>
+        <button id="send" class="primary">Ответить</button>
+      </div>
+      <p class="note">Это текстовая демонстрация логики. Голосовой режим подключается на следующем этапе.</p>
+      <button id="finish" class="secondary">Завершить тренировку и посмотреть пример оценки</button>
+    </section>
+    <section id="result" class="panel hidden">
+      <button class="back" id="againBack">← К сценариям</button>
+      <p class="eyebrow">РАЗБОР ТРЕНИРОВКИ · ДЕМО</p><h2>Оценка разговора</h2>
+      <div class="score"><strong id="scoreNum">2</strong><span>/ 4 балла</span></div>
+      <p class="lead">Пример оценки по четырём критериям методологии.</p>
+      <div class="criteria">
+        <div><span>Принял жалобу</span><b>1 / 1</b></div>
+        <div><span>Отработал возражение</span><b>0 / 1</b></div>
+        <div><span>Предложил альтернативу</span><b>1 / 1</b></div>
+        <div><span>Следующий шаг со сроком</span><b>0 / 1</b></div>
+      </div>
+      <div class="advice"><b>Что улучшить</b><p>Уточни причину возражения, ответь на неё конкретным аргументом или действием и договорись о следующем шаге с точной датой или сроком.</p></div>
+      <button class="primary" id="retry">Повторить сценарий</button>
+    </section>
+  </main>
+  <footer>Внутренний учебный прототип · Не для публичного использования</footer>
+  <script src="src/app.js"></script>
+</body>
+</html>
