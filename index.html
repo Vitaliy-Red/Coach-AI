@@ -1,23 +1,40 @@
 <!doctype html>
 <html lang="ru">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#e6293e"><title>Coach AI — тренажёр продаж SuperJob</title>
-<link rel="stylesheet" href="src/styles.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#00AA6D">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Coach AI — голосовой тренажёр звонков SuperJob</title>
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/css/app.css">
 </head>
 <body>
-<header class="topbar"><a class="brand" href="#home"><span class="mark">SJ</span><span><b>Coach AI</b><small>Тренажёр переговоров SuperJob</small></span></a><div class="top-right"><span class="env">Пилот · голосовой режим</span><label class="userpick">Сотрудник <select id="managerSelect" aria-label="Выбрать сотрудника"></select></label></div></header>
-<main class="layout">
-<aside class="sidebar"><button class="nav active" data-view="home">▦ <span>Тренажёры</span></button><button class="nav" data-view="analytics">▤ <span>Аналитика</span></button><button class="nav" data-view="profile">◉ <span>Мои результаты</span></button><div class="side-note"><b>Методология</b><p>Оценка по 4 критериям из методологии отчёта: 0–4 балла.</p></div></aside>
-<div class="content">
-<section id="home" class="view"><div class="hero"><p class="eyebrow">ТРЕНАЖЁР ПЕРЕГОВОРОВ</p><h1>Отрабатывай реальные<br>возражения работодателей</h1><p>Сценарии составлены по анализу 224 оценочных звонков. Выбирай ситуацию, веди диалог и получай разбор.</p><div class="hero-stats"><div><b>224</b><span>звонка в отчёте</span></div><div><b>15</b><span>типов возражений</span></div><div><b>100</b><span>баллов за диалог</span></div></div></div>
-<div class="section-title"><div><h2>Библиотека возражений</h2><p>Сначала — самые частые проблемы клиентов из отчёта.</p></div><input id="scenarioSearch" class="search" placeholder="Найти возражение…"></div><div id="scenarioGrid" class="scenario-grid"></div>
-<div class="report-callout"><b>Что показал анализ звонков</b><p>Чаще всего клиенты говорили об отсутствии результата (38%), достаточности HeadHunter или другой площадки (33%) и стоимости (26%). В 79% оценённых возражений работа менеджера не была доведена до полного закрытия.</p></div>
-</section>
-<section id="practice" class="view hidden"><button class="back" id="leavePractice">← К библиотеке</button><div class="practice-head"><span class="pill" id="difficulty">Практика</span><h1 id="scenarioTitle"></h1><p id="scenarioGoal"></p></div><div class="role-card"><div class="role-top"><div class="avatar">К</div><div><b id="clientRole">Работодатель</b><small id="clientMood">Скептически настроен</small></div><span class="role-live">● Ролевая ситуация</span></div><div class="context"><b>Задача тренировки</b><p id="scenarioContext">Проведите полноценный телефонный разговор. Не подсказывайте клиенту ответы и не перескакивайте к продаже.</p></div><div id="dialog" class="dialog" aria-live="polite"></div><div class="voice-console"><div class="voice-state"><span class="voice-dot"></span><span id="voiceStatus">Нажмите «Начать звонок», затем говорите в микрофон.</span></div><div class="voice-controls"><button id="startCall" class="primary">Начать звонок</button><button id="mic" class="secondary" disabled>🎙 Включить микрофон</button><button id="stopMic" class="secondary" disabled>Пауза</button></div></div><details class="text-fallback"><summary>Если микрофон недоступен — ответить текстом</summary><div class="composer"><textarea id="reply" rows="2" placeholder="Введите реплику менеджера…"></textarea><div class="compose-actions"><button id="send" class="primary">Ответить</button></div></div></details><div class="voice-line"><button id="speakToggle" class="text-btn">🔊 Озвучивание клиента: включено</button><span>Голосовой режим: Chrome или Edge, разрешите доступ к микрофону.</span></div></div><div class="practice-bottom"><div><b>Цель разговора</b><p>Разобраться в причине, ответить по существу, предложить уместный следующий шаг и зафиксировать срок.</p></div><button id="finish" class="secondary">Завершить и оценить</button></div></section>
-<section id="result" class="view hidden"><button class="back" id="resultBack">← К библиотеке</button><div class="result-head"><p class="eyebrow">РАЗБОР ТРЕНИРОВКИ</p><h1>Результат диалога</h1><div class="result-score"><strong id="scoreNum">0</strong><span>/ 100 баллов</span></div><p id="resultSummary"></p></div><div class="score-grid" id="scoreCriteria"></div><div class="feedback-grid"><div class="feedback good"><h3>Что получилось</h3><ul id="goodList"></ul></div><div class="feedback improve"><h3>Что улучшить</h3><ul id="improveList"></ul></div></div><div class="coach-tip"><b>Рекомендация тренера</b><p id="coachTip"></p></div><div class="result-actions"><button class="primary" id="retry">Повторить сценарий</button><button class="secondary" id="toAnalytics">Открыть аналитику</button></div></section>
-<section id="analytics" class="view hidden"><div class="section-title"><div><p class="eyebrow">ПОКАЗАТЕЛИ ОБУЧЕНИЯ</p><h1>Аналитика команды</h1><p>Здесь отображаются результаты тренировок, сохранённые в этом браузере.</p></div><button class="secondary" id="exportCsv">Экспортировать CSV</button></div><div class="kpi-grid"><div class="kpi"><span>Завершено тренировок</span><b id="totalTrainings">0</b></div><div class="kpi"><span>Средний балл</span><b id="teamAverage">—</b></div><div class="kpi"><span>Активных сотрудников</span><b id="activeManagers">0</b></div><div class="kpi"><span>Лучший навык</span><b id="bestSkill">—</b></div></div><div class="panel"><div class="panel-title"><h2>Результаты по сотрудникам</h2><span class="muted">Только реальные сохранённые тренировки</span></div><div class="table-wrap"><table><thead><tr><th>Сотрудник</th><th>Тренировок</th><th>Средний балл</th><th>Слабый навык</th><th>Последняя тренировка</th></tr></thead><tbody id="managerRows"><tr><td colspan="5" class="empty">Пока нет завершённых тренировок.</td></tr></tbody></table></div></div><div class="panel"><div class="panel-title"><h2>Частые возражения в исходном отчёте</h2><span class="muted">224 оценочных звонка</span></div><div id="objectionBars" class="bars"></div></div><p class="data-note">Важно: результаты обучения хранятся локально в браузере. Они не синхронизируются между устройствами и не видны руководителю на другом компьютере. Для общей корпоративной аналитики потребуется серверная база данных и авторизация.</p></section>
-<section id="profile" class="view hidden"><p class="eyebrow">ПЕРСОНАЛЬНЫЙ ПРОГРЕСС</p><h1>Мои результаты</h1><p class="muted" id="profileName"></p><div class="kpi-grid"><div class="kpi"><span>Мои тренировки</span><b id="myCount">0</b></div><div class="kpi"><span>Средний балл</span><b id="myAverage">—</b></div><div class="kpi"><span>Лучший результат</span><b id="myBest">—</b></div><div class="kpi"><span>Прогресс</span><b id="myProgress">—</b></div></div><div class="panel"><h2>История тренировок</h2><div class="table-wrap"><table><thead><tr><th>Дата</th><th>Сценарий</th><th>Балл</th><th>Рекомендация</th></tr></thead><tbody id="myRows"><tr><td colspan="4" class="empty">Пока нет сохранённых результатов.</td></tr></tbody></table></div></div></section>
-</div></main><footer>Coach AI · Внутренний учебный инструмент · Версия прототипа</footer>
-<script src="src/app.js"></script>
-</body></html>
+  <header class="top">
+    <div class="wrap">
+      <a class="brand" href="#/" aria-label="Coach AI — на главную">
+        <span id="logo"></span>
+        <span class="divider"></span>
+        <span><b>Coach AI</b><small>тренажёр звонков</small></span>
+      </a>
+      <nav class="nav" aria-label="Разделы">
+        <a href="#/" data-nav="home">Тренажёры</a>
+        <a href="#/history" data-nav="history"><span class="long">Мои результаты</span><span class="short">Результаты</span></a>
+      </nav>
+      <button class="who" id="who" type="button" title="Сменить имя"></button>
+    </div>
+  </header>
+
+  <main id="app" class="wrap" tabindex="-1"></main>
+
+  <footer class="foot">
+    <div class="wrap">
+      <span>Coach AI · внутренний тренажёр отдела продаж SuperJob</span>
+      <span>Сценарии — по расшифровкам и анализу 224 звонков</span>
+    </div>
+  </footer>
+
+  <noscript>Для работы тренажёра включите JavaScript.</noscript>
+  <script type="module" src="assets/js/app.js"></script>
+</body>
+</html>
