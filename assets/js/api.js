@@ -1,8 +1,9 @@
 // Обращения к функциям сайта (/api/*). Код команды передаётся заголовком.
 import { store } from './store.js';
 
-async function call(path, { method = 'GET', body } = {}) {
+async function call(path, { method = 'GET', body, admin = false } = {}) {
   const headers = { 'x-access-code': store.code() };
+  if (admin) headers['x-admin-code'] = store.adminCode();
   if (body) headers['content-type'] = 'application/json';
   let res;
   try {
@@ -23,6 +24,11 @@ async function call(path, { method = 'GET', body } = {}) {
   return data;
 }
 
+function who() {
+  const p = store.profile();
+  return { manager: p.name || '', team: p.team || '' };
+}
+
 export const api = {
   async config() {
     try {
@@ -32,11 +38,14 @@ export const api = {
       return { ready: false, offline: true, accessCode: false, codeOk: true, provider: null, missing: [] };
     }
   },
-  chat(body) { return call('/api/chat', { method: 'POST', body }); },
-  evaluate(body) { return call('/api/evaluate', { method: 'POST', body }); },
-  realtimeUrl({ scenario, level }) {
+  chat(body) { return call('/api/chat', { method: 'POST', body: { ...who(), ...body } }); },
+  evaluate(body) { return call('/api/evaluate', { method: 'POST', body: { ...who(), ...body } }); },
+  team() { return call('/api/team'); },
+  admin() { return call('/api/admin', { admin: true }); },
+  setBudget(budget) { return call('/api/admin', { method: 'POST', body: { budget }, admin: true }); },
+  realtimeUrl({ scenario, level, sid }) {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const q = new URLSearchParams({ scenario, level, code: store.code() });
+    const q = new URLSearchParams({ scenario, level, sid: sid || '', code: store.code(), ...who() });
     return `${proto}//${location.host}/api/realtime?${q}`;
   },
 };

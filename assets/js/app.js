@@ -5,6 +5,7 @@ import { store } from './store.js';
 import { VoiceCall } from './voice.js';
 import { TextCall } from './textcall.js';
 import { esc, $, $$, icon, LOGO, fmtTime, fmtDate, plural, toast, promptModal } from './ui.js';
+import { leaderPage } from './leader.js';
 
 const app = $('#app');
 const state = {
@@ -15,6 +16,9 @@ const state = {
   subs: false,
   evaluating: new Set(),
   mic: null,
+  teams: null,
+  adminData: null,
+  team: 'all',
 };
 
 const LEVEL_NAME = { easy: 'Лёгкий', medium: 'Средний', hard: 'Трудный', auto: 'Случайная сложность' };
@@ -25,20 +29,57 @@ init();
 
 async function init() {
   $('#logo').innerHTML = LOGO;
-  $('#who').addEventListener('click', changeName);
+  $('#who').addEventListener('click', () => pickProfile(false));
   window.addEventListener('hashchange', route);
   renderWho();
   route();
   state.cfg = await api.config();
   route();
-  if (!store.name()) await changeName(true);
   if (state.cfg.accessCode && !state.cfg.codeOk) await askCode();
+  if (!store.name()) await pickProfile(true);
+}
+
+async function loadTeams() {
+  if (state.teams) return state.teams;
+  try { state.teams = (await api.team()).teams || []; } catch { state.teams = []; }
+  return state.teams;
+}
+
+// Выбор сотрудника: команда → имя. Можно ввести имя вручную.
+async function pickProfile(first) {
+  const teams = await loadTeams();
+  if (!teams.length) { await changeName(first); return; }
+  const cur = store.profile();
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-wrap';
+    let team = cur.team && teams.some((t) => t.id === cur.team) ? cur.team : teams[0].id;
+    const draw = () => {
+      const t = teams.find((x) => x.id === team);
+      wrap.innerHTML = `
+        <div class="modal pick" role="dialog" aria-modal="true" aria-labelledby="pick-title">
+          <h2 id="pick-title">${first ? 'Кто тренируется?' : 'Сменить сотрудника'}</h2>
+          <p class="muted">Выберите команду и себя. Результаты попадут в аналитику руководителя.</p>
+          <div class="chips">${teams.map((x) => `<button type="button" class="chip ${x.id === team ? 'on' : ''}" data-team="${x.id}">${esc(x.name)}</button>`).join('')}</div>
+          <div class="people">${t.members.map((m) => `<button type="button" class="person ${m === cur.name ? 'on' : ''}" data-name="${esc(m)}">${esc(m)}</button>`).join('')}</div>
+          <form class="other"><input type="text" name="v" placeholder="Нет в списке? Впишите имя и фамилию" autocomplete="off"><button class="btn btn-outline btn-sm" type="submit">Это я</button></form>
+          ${first ? '' : '<div class="modal-actions"><button type="button" class="btn btn-ghost" data-cancel>Отмена</button></div>'}
+        </div>`;
+      wrap.querySelectorAll('[data-team]').forEach((b) => b.addEventListener('click', () => { team = b.dataset.team; draw(); }));
+      wrap.querySelectorAll('[data-name]').forEach((b) => b.addEventListener('click', () => done(b.dataset.name, team)));
+      wrap.querySelector('.other').addEventListener('submit', (e) => { e.preventDefault(); const v = e.target.v.value.trim(); if (v) done(v, team); });
+      wrap.querySelector('[data-cancel]')?.addEventListener('click', () => { wrap.remove(); resolve(false); });
+    };
+    const done = (name, teamId) => { store.setProfile(name, teamId); renderWho(); wrap.remove(); resolve(true); };
+    draw();
+    document.body.appendChild(wrap);
+  });
 }
 
 function renderWho() {
   const name = store.name();
   const initials = name ? name.split(/\s+/).map((p) => p[0]).join('').slice(0, 2).toUpperCase() : '?';
-  $('#who').innerHTML = `<span class="ava">${esc(initials)}</span><span>${esc(name || 'Представьтесь')}</span>`;
+  $('#who').innerHTML = `<span class="ava">${esc(initials)}</span><span>${esc(name || 'Кто вы?')}</span>`;
 }
 
 async function changeName(first = false) {
@@ -51,7 +92,7 @@ async function changeName(first = false) {
     submit: 'Готово',
     cancel: !first,
   });
-  if (v) { store.setName(v); renderWho(); }
+  if (v) { store.setProfile(v, store.profile().team); renderWho(); }
 }
 
 async function askCode() {
@@ -75,7 +116,10 @@ function route() {
   const parts = (location.hash.replace(/^#\/?/, '') || '').split('/').filter(Boolean);
   if (state.session && !state.session.ended && parts[0] !== 'call') state.session.hangup();
   stopMicTest();
-  $$('.nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === (parts[0] === 'history' ? 'history' : parts.length ? '' : 'home')));
+  const navKey = ['history', 'analytics', 'admin'].includes(parts[0]) ? parts[0] : parts.length ? '' : 'home';
+  $$('.nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === navKey));
+  if (parts[0] === 'analytics') return leaderPage('analytics');
+  if (parts[0] === 'admin') return leaderPage('admin');
   if (parts[0] === 's' && parts[1]) return view(briefView(parts[1]), bindBrief);
   if (parts[0] === 'call') return state.session ? view(callView(), bindCall) : (location.hash = '#/');
   if (parts[0] === 'r' && parts[1]) return view(resultView(parts[1]), bindResult);
@@ -283,7 +327,8 @@ async function startCall(id) {
   if (id === 'random') level = ['auto', 'easy', 'medium', 'hard'].includes(level) ? level : 'auto';
   else if (!['easy', 'medium', 'hard'].includes(level)) level = 'medium';
   const mode = prefs.mode === 'text' ? 'text' : 'voice';
-  state.meta = { scenario: id, level, mode, startedAt: new Date().toISOString(), title: s.title };
+  const sid = (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 12));
+  state.meta = { scenario: id, level, mode, sid, startedAt: new Date().toISOString(), title: s.title };
   state.subs = mode === 'text' ? true : Boolean(prefs.subs);
   const handlers = {
     onState: (kind, text) => { const el = $('#status'); if (el) { el.textContent = text; el.classList.toggle('err', kind === 'error'); } },
@@ -293,7 +338,7 @@ async function startCall(id) {
     onWarn: (msg, kind) => toast(msg, kind === 'error' ? 'error' : 'info'),
     onEnd: (result) => endCall(result),
   };
-  const session = mode === 'text' ? new TextCall({ scenario: id, level, on: handlers }) : new VoiceCall({ scenario: id, level, on: handlers });
+  const session = mode === 'text' ? new TextCall({ scenario: id, level, sid, on: handlers }) : new VoiceCall({ scenario: id, level, sid, on: handlers });
   state.session = session;
   const start = session.start(); // звук включаем сразу в обработчике клика
   location.hash = '#/call';
@@ -400,6 +445,7 @@ function endCall(result) {
   }
   const entry = {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    sid: meta.sid,
     scenario: meta.scenario,
     realScenario: result.resolved?.id || meta.scenario,
     level: result.resolved?.level || meta.level,
@@ -424,7 +470,7 @@ async function evaluate(id) {
   state.evaluating.add(id);
   rerenderResult(id);
   try {
-    e.eval = await api.evaluate({ scenario: e.realScenario, level: e.level, durationSec: e.durationSec, transcript: e.transcript });
+    e.eval = await api.evaluate({ sid: e.sid, scenario: e.realScenario, trainer: e.scenario, mode: e.mode, level: e.level, durationSec: e.durationSec, transcript: e.transcript });
     e.evalError = null;
   } catch (err) {
     e.evalError = err.message;

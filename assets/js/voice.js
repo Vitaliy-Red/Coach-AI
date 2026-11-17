@@ -8,9 +8,10 @@ const TR_DELTA = new Set(['response.output_audio_transcript.delta', 'response.au
 const TR_DONE = new Set(['response.output_audio_transcript.done', 'response.audio_transcript.done', 'response.output_text.done', 'response.text.done']);
 
 export class VoiceCall {
-  constructor({ scenario, level, on = {} }) {
+  constructor({ scenario, level, sid, on = {} }) {
     this.scenario = scenario;
     this.level = level;
+    this.sid = sid;
     this.on = on; // onState, onLine, onLevels, onEnd, onWarn
     this.lines = new Map(); // key → line
     this.order = [];
@@ -61,7 +62,7 @@ export class VoiceCall {
     this.micSrc.connect(this.micAnalyser);
 
     this.state('connecting', 'Соединяем…');
-    this.ws = new WebSocket(api.realtimeUrl({ scenario: this.scenario, level: this.level }));
+    this.ws = new WebSocket(api.realtimeUrl({ scenario: this.scenario, level: this.level, sid: this.sid }));
     this.ws.onmessage = (e) => { try { this.handle(JSON.parse(e.data)); } catch (err) { console.warn(err); } };
     this.ws.onclose = () => { if (!this.ended) this.finish(this.connected ? 'dropped' : 'failed'); };
     this.ws.onerror = () => {};
