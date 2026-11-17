@@ -5,7 +5,9 @@ import { store } from './store.js';
 import { esc, $, $$, icon, fmtTime, fmtDate, plural, toast, promptModal } from './ui.js';
 
 const LEVEL = { easy: 'Лёгкий', medium: 'Средний', hard: 'Трудный' };
-let teamFilter = 'all';
+let teamFilter = null;
+let answersData = null;
+let trainerFilter = 'all';
 
 const app = () => $('#app');
 const rub = (v, d = 2) => `${(Number(v) || 0).toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: d })} ₽`;
@@ -17,15 +19,27 @@ export async function leaderPage(kind) {
   let data;
   try {
     data = await api.admin();
+    if (kind === 'analytics') answersData = await api.answers().catch(() => ({ answers: [] }));
   } catch (e) {
     if (e.status === 401) {
-      const code = await promptModal({ title: 'Код руководителя', text: 'Раздел для руководителя направления и РГ.', label: 'Код', type: 'password', value: '', submit: 'Войти' });
+      if (store.adminCode()) toast('Неверный код руководителя', 'error');
+      const code = await promptModal({ title: 'Код руководителя', text: 'Раздел для руководителя направления и руководителей групп. Код вводится один раз на этом компьютере.', label: 'Код', type: 'password', value: '', submit: 'Войти' });
       if (code) { store.setAdminCode(code); return leaderPage(kind); }
-      app().innerHTML = `<div class="empty"><h2>Нужен код руководителя</h2><p class="muted">Его задают в настройках Cloudflare (ADMIN_CODE).</p></div>`;
+      store.setAdminCode('');
+      app().innerHTML = `<div class="empty"><h2>Нужен код руководителя</h2><p class="muted">Код выдаёт руководитель направления.</p><br><button class="btn btn-primary" id="retryCode">Ввести код</button></div>`;
+      $('#retryCode')?.addEventListener('click', () => leaderPage(kind));
+      return;
+    }
+    if (e.status === 429) {
+      app().innerHTML = `<div class="empty"><h2>Вход временно закрыт</h2><p class="muted">${esc(e.message)}</p></div>`;
       return;
     }
     app().innerHTML = `<div class="empty"><h2>Не удалось загрузить данные</h2><p class="muted">${esc(e.message)}</p></div>`;
     return;
+  }
+  if (teamFilter === null) {
+    const mine = store.profile().teams || [];
+    teamFilter = mine.length ? mine[0] : 'all';
   }
   if (!location.hash.startsWith('#/' + kind)) return; // пользователь ушёл со страницы
   app().innerHTML = (data.open ? openNote() : '') + (data.db ? '' : dbNote()) + (kind === 'admin' ? adminView(data) : analyticsView(data));
@@ -99,7 +113,7 @@ function adminView(d) {
         <td>${esc(fmtDate(r.at))}</td>
         <td>${esc(r.manager || '—')}<span class="t">${esc(teamName(d, r.team))}</span></td>
         <td>${esc(r.trainer)}${r.real ? `<span class="t">${esc(r.real)}</span>` : ''}</td>
-        <td>${r.mode === 'text' ? 'Текст' : 'Голос'}</td>
+        <td>${r.mode === 'text' ? 'Текст' : r.mode === 'dictation' ? 'Диктовка' : 'Голос'}</td>
         <td>${fmtTime(r.duration)}</td>
         <td>${rub(r.cost)}</td>
         <td>${r.score === null || r.score === undefined ? '—' : `<b>${r.score}</b> / 4`}</td></tr>`).join('')}</tbody>
@@ -126,7 +140,7 @@ function analyticsView(d) {
 
   return `
   <div class="section-head" style="margin-bottom:20px">
-    <div><h1 style="font-size:40px">Аналитика тренировок</h1><p class="muted">Только звонки с разбором. Сотрудник выбирает себя при входе на сайт.</p></div>
+    <div><h1 style="font-size:40px">Аналитика тренировок</h1><p class="muted">Баллы — по тренировкам с разбором. Ответы из диктовки — ниже, все подряд.</p></div>
   </div>
   <div class="chips" role="group" aria-label="Команда" style="margin-bottom:24px">${chips.map(([id, name]) => `<button class="chip ${teamFilter === id ? 'on' : ''}" data-team="${id}">${esc(name)}</button>`).join('')}</div>
   <div class="stats">
@@ -151,7 +165,7 @@ function analyticsView(d) {
     <div class="table-wrap"><table>
       <thead><tr><th>Сотрудник</th><th>Команда</th><th>Тренировок</th><th>Средний балл</th><th>Слабое место</th><th>Частая ошибка</th><th>Последняя</th></tr></thead>
       <tbody>${people.map((p) => `<tr>
-        <td>${esc(p.name)}${p.inRoster ? '' : '<span class="t">нет в составе команды</span>'}</td>
+        <td>${esc(p.name)}${p.lead ? '<span class="t">руководитель</span>' : p.inRoster ? '' : '<span class="t">нет в составе команды</span>'}</td>
         <td>${esc(p.team)}</td>
         <td>${p.count || '<span class="neg">0</span>'}</td>
         <td>${p.avg === null ? '—' : `<b>${num(p.avg)}</b> / 4`}</td>
@@ -159,15 +173,71 @@ function analyticsView(d) {
         <td>${esc(cap(p.topError) || '—')}</td>
         <td>${p.last ? esc(fmtDate(p.last)) : '—'}</td></tr>`).join('')}</tbody>
     </table></div>
+  </section>
+  ${answersView(d)}`;
+}
+
+// ---------- Ответы из диктовки: фраза клиента → что ответили менеджеры ----------
+function answersInScope(d) {
+  const all = (answersData?.answers || []).filter((a) => a.source !== 'skip');
+  if (teamFilter === 'all') return all;
+  return all.filter((a) => (a.team || '') === teamFilter);
+}
+
+function answersView(d) {
+  const list = answersInScope(d);
+  const trainers = [...new Map(list.map((a) => [a.scenario, a.title])).entries()].sort((x, y) => x[1].localeCompare(y[1], 'ru'));
+  if (trainerFilter !== 'all' && !trainers.some(([id]) => id === trainerFilter)) trainerFilter = 'all';
+  const shown = trainerFilter === 'all' ? list : list.filter((a) => a.scenario === trainerFilter);
+  const groups = new Map();
+  for (const a of shown) {
+    const k = a.scenario + '|' + a.qkey;
+    if (!groups.has(k)) groups.set(k, { title: a.title, question: a.question, step: a.qkey === 'pickup' ? -1 : parseInt(String(a.qkey).slice(1), 10) || 0, scenario: a.scenario, items: [] });
+    groups.get(k).items.push(a);
+  }
+  const ordered = [...groups.values()].sort((x, y) => x.title.localeCompare(y.title, 'ru') || x.step - y.step);
+  const people = new Set(list.map((a) => a.manager).filter(Boolean)).size;
+  return `
+  <section class="section" id="answers">
+    <div class="section-head" style="margin-bottom:16px">
+      <div><h2 style="font-size:28px">Ответы из диктовки</h2><p class="muted">${list.length} ${plural(list.length, 'ответ', 'ответа', 'ответов')} · ${people} ${plural(people, 'сотрудник', 'сотрудника', 'сотрудников')}. Фраза клиента — и что на неё ответили.</p></div>
+      ${list.length ? `<button class="btn btn-outline" id="answersCsv">${icon('download', 20)} Выгрузить ответы CSV</button>` : ''}
+    </div>
+    ${trainers.length > 1 ? `<div class="chips" style="margin-bottom:18px">${[['all', 'Все тренажёры'], ...trainers].map(([id, name]) => `<button class="chip ${trainerFilter === id ? 'on' : ''}" data-trainer="${esc(id)}">${esc(name)}</button>`).join('')}</div>` : ''}
+    ${ordered.length ? ordered.map((g) => `
+      <details class="box ans-group">
+        <summary><span class="tag">${esc(g.title)}</span><b>«${esc(g.question)}»</b><span class="muted small">${g.items.length} ${plural(g.items.length, 'ответ', 'ответа', 'ответов')}</span></summary>
+        <div class="ans-list">${g.items.map((a) => `
+          <div class="ans"><div class="ans-who"><b>${esc(a.manager || 'Без имени')}</b><span>${esc(teamName(d, a.team))} · ${esc(fmtDate(a.at))} · ${a.words} ${plural(a.words, 'слово', 'слова', 'слов')} · ${fmtTime(a.seconds)}${a.source === 'typed' ? ' · печатал' : ''}</span></div><p>${esc(a.answer)}</p></div>`).join('')}
+        </div>
+      </details>`).join('') : '<p class="muted">Пока никто не проходил диктовку.</p>'}
   </section>`;
 }
 
+function answersCsv(d) {
+  const rows = [['Дата', 'Сотрудник', 'Группа', 'Тренажёр', 'Фраза клиента', 'Ответ', 'Слов', 'Секунд', 'Как отвечал', 'Балл тренировки', 'Тренировка']];
+  const how = { voice: 'голосом', typed: 'печатал', mixed: 'голос + правка' };
+  for (const a of answersInScope(d)) {
+    rows.push([a.at, a.manager, teamName(d, a.team), a.title, a.question, a.answer, a.words, a.seconds, how[a.source] || a.source, a.score ?? '', a.sid]);
+  }
+  const csv = '\ufeff' + rows.map((r) => r.map((v) => `"${String(v ?? '').replaceAll('"', '""')}"`).join(';')).join('\n');
+  const el = document.createElement('a');
+  el.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  el.download = 'coach-ai-answers.csv';
+  el.click();
+  setTimeout(() => URL.revokeObjectURL(el.href), 1000);
+}
+
 function bind(kind, data) {
-  $$('[data-team]').forEach((b) => b.addEventListener('click', () => {
-    teamFilter = b.dataset.team;
+  const redraw = () => {
+    const y = window.scrollY;
     app().innerHTML = (data.open ? openNote() : '') + (data.db ? '' : dbNote()) + analyticsView(data);
     bind(kind, data);
-  }));
+    window.scrollTo(0, y);
+  };
+  $$('[data-team]').forEach((b) => b.addEventListener('click', () => { teamFilter = b.dataset.team; redraw(); }));
+  $$('[data-trainer]').forEach((b) => b.addEventListener('click', () => { trainerFilter = b.dataset.trainer; redraw(); }));
+  $('#answersCsv')?.addEventListener('click', () => answersCsv(data));
   $('#editBudget')?.addEventListener('click', async () => {
     const v = await promptModal({ title: 'Бюджет на тренировки', text: 'Например, стартовый грант Yandex Cloud — 4 000 ₽.', label: 'Сумма, ₽', value: String(data.budget), submit: 'Сохранить' });
     if (!v) return;

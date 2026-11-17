@@ -42,6 +42,9 @@ export const api = {
   evaluate(body) { return call('/api/evaluate', { method: 'POST', body: { ...who(), ...body } }); },
   team() { return call('/api/team'); },
   admin() { return call('/api/admin', { admin: true }); },
+  answers() { return call('/api/answers', { admin: true }); },
+  dictation(scenario, count) { return call(`/api/dictation?${new URLSearchParams({ scenario, count })}`); },
+  saveAnswer(body) { return call('/api/dictation', { method: 'POST', body: { ...who(), ...body } }); },
   setBudget(budget) { return call('/api/admin', { method: 'POST', body: { budget }, admin: true }); },
   realtimeUrl({ scenario, level, sid }) {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';

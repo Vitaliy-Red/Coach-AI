@@ -1,22 +1,16 @@
 import { json, fail, readJson } from '../_lib/http.js';
 import { db, tariffs, costOf, getSetting, setSetting } from '../_lib/usage.js';
-import { TEAMS } from '../_lib/team.js';
+import { TEAMS, LEADERS } from '../_lib/team.js';
+import { adminCheck, adminDenied } from '../_lib/admin-auth.js';
 import { CATALOG, CRITERIA } from '../../assets/js/catalog.js';
 
 // GET /api/admin — баланс, расходы и аналитика команд (для руководителя).
 // POST /api/admin { budget } — изменить бюджет.
 // Защита: переменная ADMIN_CODE, код передаётся заголовком x-admin-code. Без ADMIN_CODE раздел открыт всем.
 
-function adminOk(request, env) {
-  const need = String(env.ADMIN_CODE || '').trim();
-  if (!need) return { ok: true, open: true };
-  const got = (request.headers.get('x-admin-code') || '').trim();
-  return { ok: got === need, open: false };
-}
-
 export async function onRequestPost({ request, env }) {
-  const a = adminOk(request, env);
-  if (!a.ok) return fail(401, 'admin', 'Неверный код руководителя');
+  const a = await adminCheck(request, env);
+  if (!a.ok) return adminDenied(a);
   let body;
   try { body = await readJson(request); } catch { return fail(400, 'bad_request', 'Некорректный запрос'); }
   const budget = Number(body.budget);
@@ -27,8 +21,8 @@ export async function onRequestPost({ request, env }) {
 }
 
 export async function onRequestGet({ request, env }) {
-  const a = adminOk(request, env);
-  if (!a.ok) return fail(401, 'admin', 'Неверный код руководителя');
+  const a = await adminCheck(request, env);
+  if (!a.ok) return adminDenied(a);
   const t = tariffs(env);
   const d = await db(env).catch(() => null);
   const roster = TEAMS.map((x) => ({ id: x.id, name: x.name, lead: x.lead, members: x.members }));
@@ -44,11 +38,14 @@ export async function onRequestGet({ request, env }) {
   let spent = 0;
   let voiceSec = 0;
   let voiceCost = 0;
+  let callCost = 0;
+  let callCount = 0;
   const days = new Map();
   const rows = results.map((r) => {
     const cost = costOf(r, t);
     spent += cost;
     if (r.mode === 'voice') { voiceSec += r.duration_sec || 0; voiceCost += cost; }
+    if (r.mode !== 'dictation') { callCost += cost; callCount += 1; }
     const day = String(r.created_at).slice(0, 10);
     const dd = days.get(day) || { day, cost: 0, calls: 0 };
     dd.cost += cost;
@@ -76,6 +73,7 @@ export async function onRequestGet({ request, env }) {
       return {
         name,
         inRoster: tm.members.includes(name),
+        lead: LEADERS.some((l) => l.name === name),
         count: mine.length,
         avg: mine.length ? round(mine.reduce((s, r) => s + r.score, 0) / mine.length, 1) : null,
         weakest,
@@ -96,8 +94,10 @@ export async function onRequestGet({ request, env }) {
     };
   }).filter((tm) => tm.id || tm.count);
 
+  const answers = await d.prepare('SELECT COUNT(*) AS n, COUNT(DISTINCT sid) AS s FROM answers').first().catch(() => null);
   const calls = rows.length;
   return json({
+    answers: { count: answers?.n || 0, sessions: answers?.s || 0 },
     open: a.open,
     db: true,
     tariffs: t,
@@ -105,7 +105,7 @@ export async function onRequestGet({ request, env }) {
     spent: round(spent),
     remaining: round(budget - spent),
     calls,
-    perCall: calls ? round(spent / calls) : 0,
+    perCall: callCount ? round(callCost / callCount) : 0,
     perMinute: voiceSec > 0 ? round(voiceCost / (voiceSec / 60)) : 0,
     days: [...days.values()].sort((x, y) => x.day.localeCompare(y.day)).slice(-30).map((x) => ({ ...x, cost: round(x.cost) })),
     sessions: rows.slice(0, 50),

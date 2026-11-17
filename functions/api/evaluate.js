@@ -32,7 +32,7 @@ export async function onRequestPost({ request, env, waitUntil }) {
     return json(r);
   }
 
-  const prompt = buildEvalPrompt({ id, level, transcript, durationSec: body.durationSec });
+  const prompt = buildEvalPrompt({ id, level, transcript, durationSec: body.durationSec, mode: body.mode });
   const messages = [
     { role: 'system', content: 'Ты строгий и доброжелательный тренер продаж. Отвечаешь только валидным JSON.' },
     { role: 'user', content: prompt },

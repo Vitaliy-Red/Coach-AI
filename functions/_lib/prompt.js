@@ -140,7 +140,7 @@ export const END_CALL_TOOL = {
 
 export const MAIN_ERRORS = ['нет доказательств', 'ушёл от возражения', 'давил или спорил', 'нет следующего шага', 'не знал условий и цифр', 'нет'];
 
-export function buildEvalPrompt({ id, level, transcript, durationSec }) {
+export function buildEvalPrompt({ id, level, transcript, durationSec, mode }) {
   const pub = findScenario(id);
   const priv = PRIVATE[id];
   const objections = priv.objections.slice(0, LEVEL_OBJECTIONS[level] || 2);
@@ -151,6 +151,9 @@ export function buildEvalPrompt({ id, level, transcript, durationSec }) {
       : '';
   const ethicsNote = id === 'young-only'
     ? 'Важно: если менеджер согласился ограничить вакансию по полу или возрасту, handle = 0 и mainError = «не знал условий и цифр», а в workOn объясни, почему так нельзя (дискриминация в вакансиях запрещена законом) и как сказать корректно.'
+    : '';
+  const dictationNote = mode === 'dictation'
+    ? 'Это тренировка-диктовка, а не живой звонок: реплики клиента — реальные фразы из звонков, показаны по очереди и не зависят от ответов менеджера. Оценивай каждый ответ менеджера как ответ на реплику клиента перед ним. Критерий засчитывается, если он выполнен хотя бы в одном ответе. Не снижай оценку за то, что клиент не отреагировал на слова менеджера.'
     : '';
   const lines = transcript
     .map((t) => `[${fmt(t.t)}] ${t.role === 'manager' ? 'Менеджер' : 'Клиент'}: ${String(t.text || '').trim()}`)
@@ -170,6 +173,7 @@ ${CRITERIA.map((c, i) => `${i + 1}. ${c.key} — ${c.name}: ${c.desc}`).join('\n
 «Будем на связи», «наберу на днях» — не шаг со сроком. Нужна дата или время.
 ${typeNote}
 ${ethicsNote}
+${dictationNote}
 
 Главная ошибка — ровно одно значение из списка: ${MAIN_ERRORS.map((e) => `«${e}»`).join(', ')} («нет» — только если все 4 критерия выполнены).
 
