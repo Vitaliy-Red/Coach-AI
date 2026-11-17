@@ -1,0 +1,7 @@
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: same-origin
+  Permissions-Policy: microphone=(self), camera=(), geolocation=()
+
+/assets/*
+  Cache-Control: public, max-age=300
