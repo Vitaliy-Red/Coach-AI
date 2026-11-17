@@ -1,4 +1,4 @@
-# SuperJob Sales Trainer
+# Coach AI Sales Trainer
 
 Первая UI-заготовка тренажёра продаж.
 
