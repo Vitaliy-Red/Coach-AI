@@ -1,13 +1,14 @@
 import { providerConfig } from '../_lib/provider.js';
 import { json, fail, checkAccess, readJson, chatCompletion, extractJson } from '../_lib/http.js';
 import { buildEvalPrompt, scenarioExists, MAIN_ERRORS, CATALOG } from '../_lib/prompt.js';
+import { addUsage, saveResult } from '../_lib/usage.js';
 
 const KEYS = ['accept', 'handle', 'alternative', 'nextStep'];
 const OUTCOMES = ['оплата', 'тест', 'перезвон с датой', 'КП на почту', 'отказ', 'вопрос решён', 'без итога'];
 
 // POST /api/evaluate — разбор звонка по 4 критериям.
 // body: { scenario, level, durationSec, transcript: [{ role: 'manager'|'client', text, t }] }
-export async function onRequestPost({ request, env }) {
+export async function onRequestPost({ request, env, waitUntil }) {
   if (!checkAccess(request, env)) return fail(401, 'access', 'Неверный код команды');
   const cfg = providerConfig(env);
   if (!cfg.ok) return fail(503, 'config', 'Разбор не подключён: ' + cfg.missing.join(', '));
@@ -23,8 +24,12 @@ export async function onRequestPost({ request, env }) {
     .map((t) => ({ role: t.role, text: String(t.text).slice(0, 3000), t: Number(t.t) || 0 }));
 
   const managerWords = transcript.filter((t) => t.role === 'manager').reduce((s, t) => s + t.text.split(/\s+/).length, 0);
+  const meta = { manager: body.manager, team: body.team, scenario: body.trainer || id, realScenario: id, level, mode: body.mode };
+  const keep = (p) => { if (waitUntil) waitUntil(p); };
   if (managerWords < 12) {
-    return json(shortCall());
+    const r = shortCall();
+    keep(addUsage(env, body.sid, meta, { durationSec: body.durationSec }).then(() => saveResult(env, body.sid, r)));
+    return json(r);
   }
 
   const prompt = buildEvalPrompt({ id, level, transcript, durationSec: body.durationSec });
@@ -35,20 +40,28 @@ export async function onRequestPost({ request, env }) {
 
   let parsed = null;
   let lastErr = '';
+  const used = { llmIn: 0, llmOut: 0 };
   for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
     try {
-      const text = await chatCompletion(cfg.text, { model: cfg.text.evalModel, messages, temperature: 0.2, maxTokens: 1500, json: true });
-      parsed = extractJson(text);
+      const out = await chatCompletion(cfg.text, { model: cfg.text.evalModel, messages, temperature: 0.2, maxTokens: 1500, json: true });
+      used.llmIn += out.usage.in;
+      used.llmOut += out.usage.out;
+      parsed = extractJson(out.text);
       if (!parsed) lastErr = 'ответ не в формате JSON';
     } catch (e) {
       lastErr = e.message;
       if (e.status && e.status < 500 && e.status !== 429) break;
     }
   }
-  if (!parsed) return fail(502, 'llm', 'Не удалось получить разбор: ' + lastErr);
+  if (!parsed) {
+    keep(addUsage(env, body.sid, meta, { ...used, durationSec: body.durationSec }));
+    return fail(502, 'llm', 'Не удалось получить разбор: ' + lastErr);
+  }
 
   const type = CATALOG.find((s) => s.id === id)?.type;
-  return json(normalize(parsed, type));
+  const result = normalize(parsed, type);
+  keep(addUsage(env, body.sid, meta, { ...used, durationSec: body.durationSec }).then(() => saveResult(env, body.sid, result)));
+  return json(result);
 }
 
 function normalize(p, type) {

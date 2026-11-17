@@ -2,9 +2,10 @@
 import { api } from './api.js';
 
 export class TextCall {
-  constructor({ scenario, level, on = {} }) {
+  constructor({ scenario, level, sid, on = {} }) {
     this.scenario = scenario;
     this.level = level;
+    this.sid = sid;
     this.on = on; // onState, onLine, onEnd, onWarn, onTick
     this.lines = [];
     this.ended = false;
@@ -41,6 +42,8 @@ export class TextCall {
         scenario: this.resolved?.id || this.scenario,
         level: this.resolved?.level || this.level,
         gender: this.resolved?.gender,
+        sid: this.sid,
+        durationSec: Math.round(this.now()),
         messages: this.lines.map((l) => ({ role: l.role, text: l.text })),
       });
       if (!this.resolved && r.resolved) this.resolved = r.resolved;

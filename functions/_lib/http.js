@@ -50,7 +50,9 @@ export async function chatCompletion(textCfg, { model, messages, temperature = 0
   }
   const data = JSON.parse(raw);
   const content = data?.choices?.[0]?.message?.content;
-  return typeof content === 'string' ? content : Array.isArray(content) ? content.map((c) => c.text || '').join('') : '';
+  const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map((c) => c.text || '').join('') : '';
+  const u = data?.usage || {};
+  return { text, usage: { in: Number(u.prompt_tokens || u.input_tokens || 0), out: Number(u.completion_tokens || u.output_tokens || 0) } };
 }
 
 export function extractJson(text) {
