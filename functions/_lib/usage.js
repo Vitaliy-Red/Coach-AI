@@ -37,6 +37,16 @@ const SCHEMA = [
   )`,
   'CREATE INDEX IF NOT EXISTS sessions_created ON sessions(created_at)',
   'CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)',
+  `CREATE TABLE IF NOT EXISTS answers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sid TEXT NOT NULL, created_at TEXT NOT NULL,
+    manager TEXT, team TEXT, trainer TEXT, scenario TEXT,
+    step INTEGER, qkey TEXT, question TEXT, answer TEXT,
+    seconds REAL DEFAULT 0, words INTEGER DEFAULT 0, source TEXT
+  )`,
+  'CREATE UNIQUE INDEX IF NOT EXISTS answers_sid_step ON answers(sid, step)',
+  'CREATE INDEX IF NOT EXISTS answers_created ON answers(created_at)',
+  'CREATE TABLE IF NOT EXISTS auth_fails (ip TEXT, ts INTEGER)',
 ];
 
 let ready = null;
