@@ -252,7 +252,7 @@ function briefView(id) {
   const modeHint = {
     text: 'Живой диалог: клиента играет ИИ по портрету из реальных звонков и отвечает на ваши слова текстом. Вы отвечаете голосом — браузер переводит речь в текст — или печатаете.',
     voice: freeVoice()
-      ? 'Звонок голосом, бесплатно: клиент отвечает вслух голосом браузера, вы говорите в микрофон. Реплика уходит сама после паузы.'
+      ? 'Голос ИИ ещё в процессе подключения: скоро клиент заговорит с вами живым синтезированным голосом. Пока можно попробовать черновой вариант на голосе браузера — или тренироваться в «Диалоге» и «Фразах».'
       : 'Разговор голосом, как по телефону. Клиента играет ИИ.',
     dictation: 'Разминка без ИИ: реальные фразы клиента по одной, вы отвечаете на каждую. Фразы не зависят от ваших ответов.',
   }[mode];
@@ -292,7 +292,7 @@ function briefView(id) {
       <div class="field"><span>Режим</span>
         <div class="seg" data-seg="mode">
           <button type="button" data-v="text" class="${mode === 'text' ? 'on' : ''}">Диалог</button>
-          <button type="button" data-v="voice" class="${mode === 'voice' ? 'on' : ''}">Голос</button>
+          <button type="button" data-v="voice" class="${mode === 'voice' ? 'on' : ''}">Голос${freeVoice() ? ' <span class="soon">скоро</span>' : ''}</button>
           <button type="button" data-v="dictation" class="${dict ? 'on' : ''}">Фразы</button>
         </div>
         <p class="hint">${esc(modeHint)}</p>

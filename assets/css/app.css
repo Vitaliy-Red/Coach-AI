@@ -509,3 +509,5 @@ td .t { display: block; font-size: 12px; color: var(--table); }
   .call.is-text .avatar b { display: none; }
 }
 .call .heard { min-height: 26px; margin-top: 10px; font-size: 16px; color: var(--table); font-style: italic; }
+.seg .soon { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; line-height: 18px; vertical-align: 2px; background: var(--mint); color: var(--green-dark); }
+.seg button.on .soon { background: var(--white); color: var(--green-dark); }
