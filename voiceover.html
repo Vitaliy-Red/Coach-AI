@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Озвучка обучающего ролика — Coach AI</title>
+<link rel="icon" href="/assets/img/favicon.svg" type="image/svg+xml">
+<style>
+  :root { --green: #00AA6D; --green-dark: #00744A; --mint: #D1FFF1; --text: #3E3E3E; --line: #E3E7EB; --red: #D40E1E; --table: #4A4A4A; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Akzidenz-Grotesk Pro', Arial, Helvetica, sans-serif; color: var(--text); background: #fff; }
+  main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 38px; margin: 0 0 8px; }
+  h2 { font-size: 22px; margin: 0 0 10px; }
+  p { line-height: 1.5; }
+  .muted { color: var(--table); }
+  .step { border: 2px solid var(--line); border-radius: 24px; padding: 22px 24px; margin-top: 18px; }
+  .step.on { border-color: var(--green); }
+  .num { display: inline-flex; width: 32px; height: 32px; border-radius: 50%; background: var(--green); color: #fff; align-items: center; justify-content: center; font-weight: 700; margin-right: 10px; }
+  .btn { font: inherit; font-size: 17px; font-weight: 700; border: 2px solid var(--green); background: var(--green); color: #fff; border-radius: 999px; padding: 12px 24px; cursor: pointer; }
+  .btn.ghost { background: #fff; color: var(--green-dark); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  select { font: inherit; font-size: 16px; padding: 10px 14px; border: 2px solid var(--line); border-radius: 14px; max-width: 100%; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 12px; }
+  .note { background: var(--mint); color: var(--green-dark); border-radius: 16px; padding: 14px 18px; margin-top: 14px; }
+  .warn { background: #fff; border: 2px solid var(--red); color: var(--red); border-radius: 16px; padding: 14px 18px; margin-top: 14px; }
+  .bar { height: 10px; border-radius: 999px; background: var(--line); overflow: hidden; margin-top: 14px; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--green); transition: width .3s; }
+  .script { margin-top: 18px; max-height: 360px; overflow: auto; border-top: 1px solid var(--line); }
+  .script p { margin: 0; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 15px; }
+  .script p.now { color: var(--green-dark); font-weight: 700; }
+  .script p.done { color: #9aa3ab; }
+  .level { height: 8px; width: 160px; border-radius: 999px; background: var(--line); overflow: hidden; }
+  .level i { display: block; height: 100%; width: 0; background: var(--green); }
+  audio { width: 100%; margin-top: 14px; }
+  ol { padding-left: 22px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Озвучка обучающего ролика</h1>
+  <p class="muted">Голос Microsoft прочитает текст ролика, а страница запишет его в файл. Откройте страницу в <b>Microsoft Edge</b> на компьютере с Windows: там лучшие голоса и запись системного звука. Займёт около 5 минут, всё это время не трогайте компьютер.</p>
+  <div class="warn" id="browserWarn" hidden></div>
+
+  <section class="step on" id="step1">
+    <h2><span class="num">1</span>Голос</h2>
+    <div class="row">
+      <select id="voice" aria-label="Голос"></select>
+      <select id="rate" aria-label="Скорость">
+        <option value="0.95">Чуть медленнее</option>
+        <option value="1" selected>Обычная скорость</option>
+        <option value="1.08">Чуть быстрее</option>
+      </select>
+      <button class="btn ghost" id="testBtn" type="button">Послушать</button>
+    </div>
+    <p class="muted" style="margin-top:10px">Нужен голос «Microsoft Svetlana Online (Natural)». Если его нет в списке — вы не в Edge.</p>
+  </section>
+
+  <section class="step" id="step2">
+    <h2><span class="num">2</span>Запись</h2>
+    <ol>
+      <li>Закройте музыку и мессенджеры, выключите уведомления: в запись попадает весь звук компьютера.</li>
+      <li>Нажмите «Записать». В окне браузера выберите <b>«Весь экран»</b> и включите <b>«Также поделиться системным звуком»</b>, затем «Поделиться».</li>
+      <li>Страница проверит звук и начнёт читать текст. Дождитесь конца.</li>
+    </ol>
+    <div class="row">
+      <button class="btn" id="recBtn" type="button">Записать</button>
+      <span class="muted">Звук:</span><div class="level" aria-hidden="true"><i id="lvl"></i></div>
+      <span id="status" class="muted" aria-live="polite"></span>
+    </div>
+    <div class="bar" aria-hidden="true"><i id="prog"></i></div>
+    <div class="warn" id="recWarn" hidden></div>
+    <div class="script" id="script"></div>
+  </section>
+
+  <section class="step" id="step3" hidden>
+    <h2><span class="num">3</span>Готово — отправьте два файла в чат</h2>
+    <audio id="player" controls></audio>
+    <div class="row">
+      <a class="btn" id="dlAudio" download="coach-ai-voice.webm">Скачать озвучку</a>
+      <a class="btn ghost" id="dlTimes" download="coach-ai-voice-timings.json">Скачать тайминги</a>
+      <button class="btn ghost" id="againBtn" type="button">Записать заново</button>
+    </div>
+    <div class="note">Прослушайте запись. Если всё хорошо — перетащите оба файла в чат с Claude.</div>
+  </section>
+</main>
+
+<script type="module">
+// Текст ролика: show — как на экране, say — как читает голос (произношение имён и терминов).
+const SCRIPT = [
+  { id: 's0', lines: [
+    { show: '«Хедхантер продуктивнее, чем вы. Давайте объективно говорить».', say: 'Хедхантер продуктивнее, чем вы. Давайте объективно говорить.' },
+    { show: 'Что ответите клиенту?' },
+    { show: 'Потренируйтесь до звонка — в Coach AI.', say: 'Потренируйтесь до звонка — в Коуч Эй Ай.' },
+  ] },
+  { id: 's1', lines: [
+    { show: 'Coach AI — тренажёр звонков для менеджеров SuperJob.', say: 'Коуч Эй Ай — тренажёр звонков для менеджеров Суперджоб.' },
+    { show: 'Клиентов в нём играет искусственный интеллект, а собраны они из наших реальных звонков: настоящие возражения, настоящие фразы, настоящие цифры.' },
+    { show: 'Задача простая — отработать возражение и договориться о следующем шаге.' },
+  ] },
+  { id: 's2', lines: [
+    { show: 'Откройте адрес с экрана в Chrome или Edge.', say: 'Откройте адрес с экрана в Хроме или Эдже.' },
+    { show: 'При первом входе сайт спросит, кто тренируется.' },
+    { show: 'Выберите свою группу и нажмите на своё имя — так ваши результаты попадут в аналитику руководителя.' },
+    { show: 'Если вас нет в списке, впишите имя и фамилию.' },
+    { show: 'Сменить сотрудника можно в любой момент — кнопкой с именем справа вверху.' },
+  ] },
+  { id: 's3', lines: [
+    { show: 'На главной — тренажёры по типам возражений: конкуренты, деньги, решение, отложенный спрос, сервис и другие.' },
+    { show: 'На каждой карточке — реальная фраза клиента.' },
+    { show: 'Не знаете, с чего начать, — выберите «Случайный клиент».' },
+    { show: 'Откроем «Нам хватает хедхантер».' },
+    { show: 'Здесь — что вы знаете о клиенте до звонка.' },
+    { show: 'А что у него на уме, вы узнаете только в разговоре.' },
+  ] },
+  { id: 's4', lines: [
+    { show: 'Ниже — режим тренировки. Их три: «Диалог», «Голос» и «Фразы».' },
+    { show: 'Голос ИИ ещё в процессе подключения, но скоро она научится говорить с вами: клиент будет отвечать живым синтезированным голосом.', say: 'Голос и-и ещё в процессе подключения, но скоро она научится говорить с вами: клиент будет отвечать живым синтезированным голосом.' },
+    { show: 'А пока тренируемся в диалоге и во фразах: отвечаем голосом через диктовку или печатаем.' },
+  ] },
+  { id: 's5', lines: [
+    { show: 'Выберите «Диалог», сложность — и нажмите «Начать диалог».' },
+    { show: 'Клиент снимает трубку.' },
+    { show: 'Отвечать удобнее голосом: нажмите на микрофон рядом с полем и говорите — браузер сам превратит речь в текст.' },
+    { show: 'Если что-то распозналось не так, поправьте и нажмите Enter.', say: 'Если что-то распозналось не так, поправьте и нажмите Энтер.' },
+    { show: 'Можно и просто печатать.' },
+    { show: 'Клиент реагирует на ваши слова, как живой человек.' },
+    { show: 'Задали открытый вопрос — он раскроет настоящую причину.' },
+    { show: 'Начали давить или сыпать лозунгами — закроется.' },
+    { show: 'Завершите разговор, когда договоритесь о шаге или получите отказ.' },
+  ] },
+  { id: 's6', lines: [
+    { show: 'Через пятнадцать–тридцать секунд придёт разбор.', say: 'Через пятнадцать — тридцать секунд придёт разбор.' },
+    { show: 'Балл — от нуля до четырёх, по четырём шагам: приняли жалобу, отработали возражение, предложили альтернативу, назначили шаг со сроком.' },
+    { show: 'Если ошиблись — ниже будет главная ошибка. И готовая фраза: как можно было сказать лучше.' },
+    { show: 'Здесь же — расшифровка разговора.' },
+    { show: 'Нажмите «Позвонить ещё раз» — и закрепите.' },
+  ] },
+  { id: 's7', lines: [
+    { show: 'Режим «Фразы» — разминка.' },
+    { show: 'Реальные фразы клиентов идут по одной, а вы отвечаете на каждую — голосом или текстом.' },
+    { show: 'Можно взять шесть, десять или все.' },
+    { show: 'Первая фраза — клиент снимает трубку: отработайте начало разговора.' },
+  ] },
+  { id: 's8', lines: [
+    { show: 'Во вкладке «Мои результаты» — все ваши тренировки: средний балл, лучший результат и шаги, на которых вы проседаете чаще всего.' },
+  ] },
+  { id: 's9', lines: [
+    { show: 'Руководителям.' },
+    { show: 'Нажмите кнопку с именем, выберите «Я руководитель» и себя.' },
+    { show: 'Код доступа выдаёт руководитель направления.' },
+    { show: 'В «Аналитике» — ваши группы: средний балл, слабые шаги, частые ошибки и ответы менеджеров на реальные фразы клиентов.' },
+    { show: 'Их можно выгрузить таблицей.' },
+    { show: 'Во вкладке «Руководитель» — бюджет и дневной лимит бесплатного ИИ.', say: 'Во вкладке «Руководитель» — бюджет и дневной лимит бесплатного и-и.' },
+  ] },
+  { id: 's10', lines: [
+    { show: 'Если появится сообщение «лимит на сегодня исчерпан» — продолжите завтра или потренируйтесь во «Фразах».' },
+    { show: 'Голос ИИ уже на подходе.', say: 'Голос и-и уже на подходе.' },
+    { show: 'А пока — десять минут в день, и любое возражение будет звучать знакомо.' },
+    { show: 'Удачных звонков!' },
+  ] },
+];
+const GAP_LINE = 350;   // пауза между фразами, мс
+const GAP_SCENE = 900;  // пауза между сценами, мс
+
+const $ = (s) => document.querySelector(s);
+const TTS = window.speechSynthesis;
+const flat = SCRIPT.flatMap((s) => s.lines.map((l, i) => ({ scene: s.id, i, show: l.show, say: l.say || l.show.replace(/[«»]/g, '') })));
+$('#script').innerHTML = flat.map((l, k) => `<p id="l${k}">${l.show}</p>`).join('');
+
+const isEdge = / Edg\//.test(navigator.userAgent);
+if (!isEdge) { const w = $('#browserWarn'); w.hidden = false; w.textContent = 'Эта страница рассчитана на Microsoft Edge: там есть голос Светланы и запись системного звука. Откройте её адрес в Edge.'; }
+
+let voices = [];
+function loadVoices() {
+  voices = TTS.getVoices().filter((v) => /^ru/i.test(v.lang));
+  const sel = $('#voice');
+  const score = (v) => (/svetlana/i.test(v.name) ? 20 : 0) + (/(natural|online)/i.test(v.name) ? 10 : 0);
+  voices.sort((a, b) => score(b) - score(a));
+  sel.innerHTML = voices.length ? voices.map((v, i) => `<option value="${i}">${v.name}</option>`).join('') : '<option>Русских голосов нет</option>';
+}
+loadVoices();
+TTS.addEventListener?.('voiceschanged', loadVoices);
+
+function say(text, rate) {
+  return new Promise((resolve) => {
+    const u = new SpeechSynthesisUtterance(text);
+    const v = voices[Number($('#voice').value) || 0];
+    if (v) { u.voice = v; u.lang = v.lang; } else u.lang = 'ru-RU';
+    u.rate = rate;
+    const mark = { start: 0, end: 0 };
+    u.onstart = () => { mark.start = performance.now(); };
+    let done = false;
+    const fin = () => { if (done) return; done = true; mark.end = performance.now(); clearTimeout(g); resolve(mark); };
+    u.onend = fin; u.onerror = fin;
+    const g = setTimeout(fin, 4000 + text.length * 120);
+    TTS.speak(u);
+  });
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+$('#testBtn').addEventListener('click', () => { TTS.cancel(); say('Здравствуйте! Это голос для обучающего ролика Коуч Эй Ай.', Number($('#rate').value)); });
+
+function setStatus(t) { $('#status').textContent = t; }
+function warn(t) { const w = $('#recWarn'); w.hidden = !t; w.textContent = t || ''; }
+
+let stream, ctx, an, buf, meterTimer;
+function meter() {
+  if (!an) return 0;
+  an.getFloatTimeDomainData(buf);
+  let s = 0; for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i];
+  const v = Math.min(1, Math.sqrt(s / buf.length) * 6);
+  $('#lvl').style.width = Math.round(v * 100) + '%';
+  return v;
+}
+
+async function record() {
+  warn('');
+  $('#recBtn').disabled = true;
+  $('#step3').hidden = true;
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({
+      video: true,
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      systemAudio: 'include', selfBrowserSurface: 'include', surfaceSwitching: 'exclude',
+    });
+  } catch {
+    warn('Доступ к экрану не дали. Нажмите «Записать» ещё раз и выберите «Весь экран» со звуком.');
+    $('#recBtn').disabled = false; return;
+  }
+  const track = stream.getAudioTracks()[0];
+  if (!track) {
+    stream.getTracks().forEach((t) => t.stop());
+    warn('Звук не передан. В окне выбора включите «Также поделиться системным звуком» (вкладка «Весь экран»).');
+    $('#recBtn').disabled = false; return;
+  }
+  stream.getVideoTracks().forEach((t) => t.stop()); // видео не нужно
+  ctx = new AudioContext();
+  an = ctx.createAnalyser(); an.fftSize = 1024; buf = new Float32Array(1024);
+  ctx.createMediaStreamSource(new MediaStream([track])).connect(an);
+  meterTimer = setInterval(meter, 60);
+
+  // Проверка: слышим ли синтез в записи.
+  setStatus('Проверяю звук…');
+  let peak = 0;
+  const peakTimer = setInterval(() => { peak = Math.max(peak, meter()); }, 40);
+  await say('Проверка звука.', 1);
+  await sleep(300);
+  clearInterval(peakTimer);
+  if (peak < 0.02) {
+    clearInterval(meterTimer); track.stop(); ctx.close();
+    warn('Голос не попадает в запись. Выберите «Весь экран» (не вкладку) и включите «Также поделиться системным звуком». Проверьте, что звук компьютера не выключен.');
+    setStatus(''); $('#recBtn').disabled = false; return;
+  }
+
+  // Запись.
+  const rate = Number($('#rate').value);
+  const rec = new MediaRecorder(new MediaStream([track]), { mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '', audioBitsPerSecond: 128000 });
+  const chunks = [];
+  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  rec.start(1000);
+  const t0 = performance.now();
+  await sleep(700);
+  const marks = [];
+  for (let k = 0; k < flat.length; k++) {
+    const l = flat[k];
+    document.querySelectorAll('.script p.now').forEach((p) => { p.classList.remove('now'); p.classList.add('done'); });
+    const p = $('#l' + k); p.classList.add('now'); p.scrollIntoView({ block: 'nearest' });
+    setStatus(`Читаю ${k + 1} из ${flat.length}`);
+    $('#prog').style.width = Math.round((100 * k) / flat.length) + '%';
+    const m = await say(l.say, rate);
+    marks.push({ scene: l.scene, i: l.i, text: l.show, start: Math.round(m.start - t0), end: Math.round(m.end - t0) });
+    const nextScene = flat[k + 1] && flat[k + 1].scene !== l.scene;
+    await sleep(nextScene ? GAP_SCENE : GAP_LINE);
+  }
+  await sleep(800);
+  rec.stop();
+  await new Promise((r) => { rec.onstop = r; });
+  clearInterval(meterTimer); track.stop(); ctx.close();
+  $('#prog').style.width = '100%';
+  document.querySelectorAll('.script p.now').forEach((p) => p.classList.replace('now', 'done'));
+  const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+  const timings = { voice: voices[Number($('#voice').value) || 0]?.name || '', rate, createdAt: new Date().toISOString(), lines: marks };
+  $('#player').src = URL.createObjectURL(blob);
+  $('#dlAudio').href = URL.createObjectURL(blob);
+  $('#dlTimes').href = URL.createObjectURL(new Blob([JSON.stringify(timings, null, 2)], { type: 'application/json' }));
+  $('#step3').hidden = false; $('#step3').classList.add('on');
+  setStatus('Готово');
+  $('#recBtn').disabled = false;
+}
+$('#recBtn').addEventListener('click', record);
+$('#againBtn').addEventListener('click', () => { document.querySelectorAll('.script p').forEach((p) => p.classList.remove('now', 'done')); record(); });
+</script>
+</body>
+</html>
