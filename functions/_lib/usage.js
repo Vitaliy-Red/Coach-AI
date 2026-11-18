@@ -55,6 +55,10 @@ export async function db(env) {
   if (!ready) {
     ready = (async () => {
       for (const sql of SCHEMA) await env.DB.prepare(sql).run();
+      // Новые поля в уже созданной таблице. Ошибка «колонка уже есть» — норма.
+      for (const sql of ['ALTER TABLE sessions ADD COLUMN cf_neurons REAL DEFAULT 0']) {
+        await env.DB.prepare(sql).run().catch(() => {});
+      }
     })().catch((e) => { ready = null; throw e; });
   }
   await ready;
@@ -62,6 +66,13 @@ export async function db(env) {
 }
 
 const clean = (v, max = 120) => String(v ?? '').slice(0, max);
+
+// Расход текстовой модели: платные токены (Yandex, OpenAI) или бесплатные нейроны Cloudflare.
+export function usageFrom(u = {}) {
+  return u.cf
+    ? { llmIn: 0, llmOut: 0, cfNeurons: Number(u.neurons) || 0 }
+    : { llmIn: Number(u.in) || 0, llmOut: Number(u.out) || 0, cfNeurons: 0 };
+}
 
 // Создаёт запись сеанса (если нет) и добавляет расход. Ошибки базы не ломают звонок.
 export async function addUsage(env, sid, meta = {}, add = {}) {
@@ -84,10 +95,11 @@ export async function addUsage(env, sid, meta = {}, add = {}) {
         duration_sec = MAX(duration_sec, ?2),
         audio_in_sec = audio_in_sec + ?3, audio_out_sec = audio_out_sec + ?4,
         rt_in_tokens = rt_in_tokens + ?5, rt_cached_tokens = rt_cached_tokens + ?6, rt_out_tokens = rt_out_tokens + ?7,
-        llm_in_tokens = llm_in_tokens + ?8, llm_out_tokens = llm_out_tokens + ?9
+        llm_in_tokens = llm_in_tokens + ?8, llm_out_tokens = llm_out_tokens + ?9,
+        cf_neurons = COALESCE(cf_neurons, 0) + ?10
        WHERE id = ?1`
     ).bind(sid, num(add.durationSec), num(add.audioIn), num(add.audioOut), Math.round(num(add.rtIn)), Math.round(num(add.rtCached)),
-      Math.round(num(add.rtOut)), Math.round(num(add.llmIn)), Math.round(num(add.llmOut))).run();
+      Math.round(num(add.rtOut)), Math.round(num(add.llmIn)), Math.round(num(add.llmOut)), Math.round(num(add.cfNeurons) * 10) / 10).run();
   } catch (e) {
     console.log('usage write failed', e && e.message);
   }
