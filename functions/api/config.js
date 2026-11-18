@@ -8,6 +8,8 @@ export async function onRequestGet({ request, env }) {
   return json({
     ready: cfg.ok,
     textReady: Boolean(cfg.text),
+    // Голос: browser — бесплатно (голос браузера + текстовая модель), realtime — живой голос Yandex/OpenAI.
+    voiceEngine: String(env.VOICE_ENGINE || '').toLowerCase() === 'realtime' ? 'realtime' : 'browser',
     textProvider: cfg.textProvider || null,
     provider: cfg.provider || null,
     missing: cfg.ok ? [] : cfg.missing,
