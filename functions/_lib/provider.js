@@ -4,14 +4,16 @@
 //   PROVIDER=yandex, YANDEX_API_KEY, YANDEX_FOLDER_ID
 // Вариант B — OpenAI (как голос ChatGPT; официально в России не работает):
 //   PROVIDER=openai, OPENAI_API_KEY
+// Вариант C — Gemini Live через мост (бесплатно через AI Studio API Key):
+//   PROVIDER=gemini, GEMINI_BRIDGE_URL=https://voxlive-backend-82zq.onrender.com
 // Необязательно: ACCESS_CODE (код команды), REALTIME_MODEL, LLM_MODEL, EVAL_MODEL,
 //   VOICE_FEMALE, VOICE_MALE, VOICE_ROLE, MAX_CALL_SECONDS, YANDEX_TRANSCRIPTION.
 //
 // Текст (диалог и разбор) может идти через бесплатные открытые модели Cloudflare Workers AI:
 //   привязка AI в настройках проекта. Тогда текст идёт через неё, голос — через PROVIDER.
-//   TEXT_PROVIDER=yandex|openai — вернуть текст платному провайдеру; CF_MODEL, CF_EVAL_MODEL — модели.
-
+//   TEXT_PROVIDER=yandex|openai|gemini — вернуть текст основному провайдеру; CF_MODEL, CF_EVAL_MODEL — модели.
 // Открытые модели Workers AI: нейроны Cloudflare на 1 млн токенов (бесплатно 10 000 нейронов в сутки).
+
 export const CF_MODELS = {
   '@cf/google/gemma-4-26b-a4b-it': { in: 9091, out: 27273 },
   '@cf/openai/gpt-oss-120b': { in: 31818, out: 68182, reasoning: true },
@@ -21,6 +23,7 @@ export const CF_MODELS = {
   '@cf/mistralai/mistral-small-3.1-24b-instruct': { in: 31876, out: 50488 },
   '@cf/meta/llama-3.3-70b-instruct-fp8-fast': { in: 26668, out: 204805 },
 };
+
 export const CF_DAILY_NEURONS = 10000;
 export const CF_CHAT_DEFAULT = '@cf/google/gemma-4-26b-a4b-it';
 export const CF_EVAL_DEFAULT = '@cf/openai/gpt-oss-120b';
@@ -48,7 +51,7 @@ export function providerConfig(env = {}) {
 
 function voiceConfig(env = {}) {
   const raw = String(env.PROVIDER || '').toLowerCase().trim();
-  const provider = raw || (env.YANDEX_API_KEY ? 'yandex' : env.OPENAI_API_KEY ? 'openai' : '');
+  const provider = raw || (env.YANDEX_API_KEY ? 'yandex' : env.OPENAI_API_KEY ? 'openai' : env.GEMINI_BRIDGE_URL ? 'gemini' : '');
   const maxCall = clampInt(env.MAX_CALL_SECONDS, 60, 1800, 900);
 
   if (provider === 'yandex') {
@@ -110,6 +113,38 @@ function voiceConfig(env = {}) {
         headers: auth,
         model: env.LLM_MODEL || 'gpt-4.1-mini',
         evalModel: env.EVAL_MODEL || 'gpt-4.1',
+        jsonMode: true,
+      },
+    };
+  }
+
+  if (provider === 'gemini') {
+    const bridgeBase = (env.GEMINI_BRIDGE_URL || 'https://voxlive-backend-82zq.onrender.com')
+      .trim()
+      .replace(/\/$/, '')
+      .replace(/^wss:/i, 'https:')
+      .replace(/^ws:/i, 'http:');
+    const rtModel = env.REALTIME_MODEL || 'gemini-3.8-live';
+    return {
+      provider,
+      ok: true,
+      maxCall,
+      realtime: {
+        url: `${bridgeBase}/api/coach-realtime`,
+        headers: {},
+        model: rtModel,
+        voices: { female: env.VOICE_FEMALE || 'Kore', male: env.VOICE_MALE || 'Puck' },
+        role: '',
+        rate: 16000,
+        transcriptionModel: '',
+        transcription: true,
+        flavor: 'gemini',
+      },
+      text: {
+        url: `${bridgeBase}/api/coach-chat`,
+        headers: {},
+        model: env.LLM_MODEL || 'gemini-4-hydrogen',
+        evalModel: env.EVAL_MODEL || 'gemini-4-hydrogen',
         jsonMode: true,
       },
     };
