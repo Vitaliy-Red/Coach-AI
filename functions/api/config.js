@@ -7,6 +7,8 @@ export async function onRequestGet({ request, env }) {
   const accessCode = Boolean(String(env.ACCESS_CODE || '').trim());
   return json({
     ready: cfg.ok,
+    textReady: Boolean(cfg.text),
+    textProvider: cfg.textProvider || null,
     provider: cfg.provider || null,
     missing: cfg.ok ? [] : cfg.missing,
     rate: cfg.ok ? cfg.realtime.rate : null,

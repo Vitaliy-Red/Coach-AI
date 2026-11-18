@@ -6,8 +6,47 @@
 //   PROVIDER=openai, OPENAI_API_KEY
 // Необязательно: ACCESS_CODE (код команды), REALTIME_MODEL, LLM_MODEL, EVAL_MODEL,
 //   VOICE_FEMALE, VOICE_MALE, VOICE_ROLE, MAX_CALL_SECONDS, YANDEX_TRANSCRIPTION.
+//
+// Текст (диалог и разбор) может идти через бесплатные открытые модели Cloudflare Workers AI:
+//   привязка AI в настройках проекта. Тогда текст идёт через неё, голос — через PROVIDER.
+//   TEXT_PROVIDER=yandex|openai — вернуть текст платному провайдеру; CF_MODEL, CF_EVAL_MODEL — модели.
+
+// Открытые модели Workers AI: нейроны Cloudflare на 1 млн токенов (бесплатно 10 000 нейронов в сутки).
+export const CF_MODELS = {
+  '@cf/google/gemma-4-26b-a4b-it': { in: 9091, out: 27273 },
+  '@cf/openai/gpt-oss-120b': { in: 31818, out: 68182, reasoning: true },
+  '@cf/openai/gpt-oss-20b': { in: 18182, out: 27273, reasoning: true },
+  '@cf/qwen/qwen3-30b-a3b-fp8': { in: 4625, out: 30475, noThink: true },
+  '@cf/zai-org/glm-4.7-flash': { in: 5500, out: 36400, reasoning: true },
+  '@cf/mistralai/mistral-small-3.1-24b-instruct': { in: 31876, out: 50488 },
+  '@cf/meta/llama-3.3-70b-instruct-fp8-fast': { in: 26668, out: 204805 },
+};
+export const CF_DAILY_NEURONS = 10000;
+export const CF_CHAT_DEFAULT = '@cf/google/gemma-4-26b-a4b-it';
+export const CF_EVAL_DEFAULT = '@cf/openai/gpt-oss-120b';
+
+export function cfNeurons(model, inTok, outTok) {
+  const r = CF_MODELS[model] || { in: 30000, out: 70000 };
+  return ((Number(inTok) || 0) * r.in + (Number(outTok) || 0) * r.out) / 1e6;
+}
 
 export function providerConfig(env = {}) {
+  const base = voiceConfig(env);
+  const want = String(env.TEXT_PROVIDER || (env.AI ? 'cloudflare' : '')).toLowerCase().trim();
+  if (want === 'cloudflare' && env.AI) {
+    const text = {
+      kind: 'cloudflare',
+      ai: env.AI,
+      model: env.CF_MODEL || CF_CHAT_DEFAULT,
+      evalModel: env.CF_EVAL_MODEL || CF_EVAL_DEFAULT,
+      jsonMode: false,
+    };
+    return { ...base, text, textProvider: 'cloudflare' };
+  }
+  return { ...base, textProvider: base.text ? base.provider : '' };
+}
+
+function voiceConfig(env = {}) {
   const raw = String(env.PROVIDER || '').toLowerCase().trim();
   const provider = raw || (env.YANDEX_API_KEY ? 'yandex' : env.OPENAI_API_KEY ? 'openai' : '');
   const maxCall = clampInt(env.MAX_CALL_SECONDS, 60, 1800, 900);

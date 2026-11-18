@@ -71,6 +71,7 @@ function adminView(d) {
   </div>
   <div class="budget-bar" aria-label="Израсходовано ${used}%"><i style="width:${used}%"></i></div>
   <p class="hint" style="margin-top:8px">Израсходовано ${used}% бюджета.</p>
+  ${freeAiBlock(d.textAi)}
 
   <section class="section">
     <div class="metrics">
@@ -118,6 +119,21 @@ function adminView(d) {
         <td>${rub(r.cost)}</td>
         <td>${r.score === null || r.score === undefined ? '—' : `<b>${r.score}</b> / 4`}</td></tr>`).join('')}</tbody>
     </table></div>` : '<p class="muted">Пока пусто.</p>'}
+  </section>`;
+}
+
+// Бесплатный ИИ Cloudflare для диалога и разбора: дневной лимит нейронов.
+function freeAiBlock(ai) {
+  if (!ai || !ai.free) return '';
+  const pct = Math.min(100, Math.round((100 * ai.usedToday) / ai.limit));
+  const left = Math.max(0, ai.limit - ai.usedToday);
+  const short = (m) => String(m || '').replace(/^@cf\/[^/]+\//, '');
+  return `
+  <section class="section box">
+    <h2>Бесплатный ИИ для диалога и разбора</h2>
+    <p class="muted">Открытые модели Cloudflare Workers AI: диалог — ${esc(short(ai.model))}, разбор — ${esc(short(ai.evalModel))}. Денег не списывает: после дневного лимита диалог останавливается до 03:00 по Москве.</p>
+    <div class="budget-bar" aria-label="Использовано ${pct}% лимита"><i style="width:${pct}%"></i></div>
+    <p class="hint" style="margin-top:8px">Сегодня ${ai.usedToday.toLocaleString('ru-RU')} из ${ai.limit.toLocaleString('ru-RU')} нейронов${ai.perTraining ? ` · одна тренировка ≈ ${ai.perTraining.toLocaleString('ru-RU')} · хватит ещё примерно на ${Math.floor(left / ai.perTraining)}` : ''}.</p>
   </section>`;
 }
 

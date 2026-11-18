@@ -1,7 +1,7 @@
 import { providerConfig } from '../_lib/provider.js';
 import { json, fail, checkAccess, readJson, chatCompletion, extractJson } from '../_lib/http.js';
 import { buildEvalPrompt, scenarioExists, MAIN_ERRORS, CATALOG } from '../_lib/prompt.js';
-import { addUsage, saveResult } from '../_lib/usage.js';
+import { addUsage, saveResult, usageFrom } from '../_lib/usage.js';
 
 const KEYS = ['accept', 'handle', 'alternative', 'nextStep'];
 const OUTCOMES = ['оплата', 'тест', 'перезвон с датой', 'КП на почту', 'отказ', 'вопрос решён', 'без итога'];
@@ -11,7 +11,7 @@ const OUTCOMES = ['оплата', 'тест', 'перезвон с датой', 
 export async function onRequestPost({ request, env, waitUntil }) {
   if (!checkAccess(request, env)) return fail(401, 'access', 'Неверный код команды');
   const cfg = providerConfig(env);
-  if (!cfg.ok) return fail(503, 'config', 'Разбор не подключён: ' + cfg.missing.join(', '));
+  if (!cfg.text) return fail(503, 'config', 'Разбор не подключён: ' + (cfg.missing || []).join(', '));
 
   let body;
   try { body = await readJson(request, 400_000); } catch { return fail(400, 'bad_request', 'Некорректный запрос'); }
@@ -40,12 +40,14 @@ export async function onRequestPost({ request, env, waitUntil }) {
 
   let parsed = null;
   let lastErr = '';
-  const used = { llmIn: 0, llmOut: 0 };
+  const used = { llmIn: 0, llmOut: 0, cfNeurons: 0 };
   for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
     try {
       const out = await chatCompletion(cfg.text, { model: cfg.text.evalModel, messages, temperature: 0.2, maxTokens: 1500, json: true });
-      used.llmIn += out.usage.in;
-      used.llmOut += out.usage.out;
+      const u = usageFrom(out.usage);
+      used.llmIn += u.llmIn;
+      used.llmOut += u.llmOut;
+      used.cfNeurons += u.cfNeurons;
       parsed = extractJson(out.text);
       if (!parsed) lastErr = 'ответ не в формате JSON';
     } catch (e) {

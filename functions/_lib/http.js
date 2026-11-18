@@ -1,3 +1,4 @@
+import { CF_MODELS, cfNeurons } from './provider.js';
 // Общие помощники для функций.
 
 export function json(data, status = 200, extra = {}) {
@@ -34,7 +35,37 @@ export async function readJson(request, limit = 200_000) {
 }
 
 // Запрос к OpenAI-совместимому chat/completions (OpenAI или Yandex AI Studio).
+// Открытые модели Cloudflare Workers AI через привязку AI (без ключей; бесплатно 10 000 нейронов в сутки).
+async function workersAi(textCfg, { model, messages, temperature, maxTokens }) {
+  const name = model || textCfg.model;
+  const meta = CF_MODELS[name] || {};
+  let msgs = messages;
+  if (meta.noThink) msgs = messages.map((m, i) => (i === messages.length - 1 && m.role === 'user' ? { ...m, content: m.content + ' /no_think' } : m));
+  // Модели с рассуждением тратят токены на «мысли» до ответа: даём запас и просим рассуждать коротко.
+  const input = { messages: msgs, temperature, max_tokens: meta.reasoning ? maxTokens + 1200 : maxTokens + 700 };
+  if (meta.reasoning) input.reasoning = { effort: 'low' };
+  let r;
+  try {
+    r = await textCfg.ai.run(name, input);
+  } catch (e) {
+    const msg = String(e?.message || e);
+    const err = /neuron|allocation|4006|quota|daily/i.test(msg)
+      ? new Error('Бесплатный лимит ИИ на сегодня исчерпан (10 000 нейронов Cloudflare). Он обновится в 03:00 по Москве.')
+      : new Error('Модель Cloudflare не ответила: ' + msg.slice(0, 200));
+    err.status = /neuron|allocation|4006|quota|daily/i.test(msg) ? 429 : 502;
+    throw err;
+  }
+  let text = r?.response ?? r?.choices?.[0]?.message?.content ?? '';
+  if (typeof text !== 'string') text = text && typeof text === 'object' ? JSON.stringify(text) : String(text || '');
+  text = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+  const u = r?.usage || {};
+  const inTok = Number(u.prompt_tokens || u.input_tokens || 0);
+  const outTok = Number(u.completion_tokens || u.output_tokens || 0);
+  return { text, usage: { in: inTok, out: outTok, cf: true, neurons: cfNeurons(name, inTok, outTok) } };
+}
+
 export async function chatCompletion(textCfg, { model, messages, temperature = 0.7, maxTokens = 600, json: wantJson = false }) {
+  if (textCfg.ai) return workersAi(textCfg, { model, messages, temperature, maxTokens });
   const body = { model: model || textCfg.model, messages, temperature, max_tokens: maxTokens };
   if (wantJson && textCfg.jsonMode) body.response_format = { type: 'json_object' };
   const res = await fetch(textCfg.url, {

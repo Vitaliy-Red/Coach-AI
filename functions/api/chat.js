@@ -2,7 +2,7 @@ import { providerConfig } from '../_lib/provider.js';
 import { json, fail, checkAccess, readJson, chatCompletion } from '../_lib/http.js';
 import { buildClientPrompt, resolveScenario, resolveGender, scenarioExists } from '../_lib/prompt.js';
 import { PRIVATE } from '../_lib/private.js';
-import { addUsage } from '../_lib/usage.js';
+import { addUsage, usageFrom } from '../_lib/usage.js';
 
 const END_MARK = /\[\s*конец\s+звонка\s*\]/i;
 
@@ -11,7 +11,7 @@ const END_MARK = /\[\s*конец\s+звонка\s*\]/i;
 export async function onRequestPost({ request, env, waitUntil }) {
   if (!checkAccess(request, env)) return fail(401, 'access', 'Неверный код команды');
   const cfg = providerConfig(env);
-  if (!cfg.ok) return fail(503, 'config', 'Тренажёр не подключён: ' + cfg.missing.join(', '));
+  if (!cfg.text) return fail(503, 'config', 'Тренажёр не подключён: ' + (cfg.missing || []).join(', '));
 
   let body;
   try { body = await readJson(request); } catch { return fail(400, 'bad_request', 'Некорректный запрос'); }
@@ -43,12 +43,12 @@ export async function onRequestPost({ request, env, waitUntil }) {
     let reply = out.text;
     const usageWrite = addUsage(env, body.sid,
       { manager: body.manager, team: body.team, scenario: reqId, realScenario: resolved.id, level: resolved.level, mode: 'text' },
-      { llmIn: out.usage.in, llmOut: out.usage.out, durationSec: body.durationSec });
+      { ...usageFrom(out.usage), durationSec: body.durationSec });
     if (waitUntil) waitUntil(usageWrite);
     const ended = END_MARK.test(reply);
     reply = reply.replace(END_MARK, '').replace(/^["«]|["»]$/g, '').trim();
     return json({ reply: reply || 'Алло?', ended, resolved });
   } catch (e) {
-    return fail(502, 'llm', [401, 403, 429].includes(e.status) ? e.message : 'Модель не ответила: ' + e.message);
+    return fail(502, 'llm', [401, 403, 429].includes(e.status) || cfg.text.ai ? e.message : 'Модель не ответила: ' + e.message);
   }
 }

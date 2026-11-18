@@ -260,7 +260,7 @@ function briefView(id) {
     voice: [['headset', 'Наденьте гарнитуру: так клиент не услышит сам себя из динамиков.'], ['ear', 'Говорите как в настоящем звонке. Клиента можно перебивать.'], ['clock', 'Обычно звонок длится 3–8 минут.']],
   }[mode];
   const startLabel = { text: `${icon('mic', 22)} Начать диалог`, voice: `${icon('phone', 22)} Позвонить клиенту`, dictation: `${icon('quote', 22)} Начать` }[mode];
-  const canStart = dict ? !state.cfg.offline : state.cfg.ready;
+  const canStart = dict ? !state.cfg.offline : mode === 'text' ? (state.cfg.textReady ?? state.cfg.ready) : state.cfg.ready;
   return `
   <a class="back" href="#/">${icon('back', 20)} Все тренажёры</a>
   <div class="brief">
@@ -304,7 +304,8 @@ function briefView(id) {
       </div>
       <div class="tips">${tips.map(([ic, t]) => `<div>${icon(ic, 20)}<span>${esc(t)}</span></div>`).join('')}</div>
       <button type="button" class="btn btn-primary btn-lg" id="startCall" ${canStart ? '' : 'disabled'}>${startLabel}</button>
-      ${dict ? '' : configNote()}
+      ${dict || (mode === 'text' && state.cfg.textReady) ? '' : configNote()}
+      ${mode === 'text' && state.cfg.textProvider === 'cloudflare' ? `<p class="hint">Клиента играет бесплатная открытая модель. Дневной лимит общий на всех, обновляется в 03:00 по Москве.</p>` : ''}
     </aside>
   </div>`;
 }
@@ -390,7 +391,8 @@ async function startDictation(id) {
 }
 
 async function startCall(id) {
-  if (!state.cfg.ready) { toast('Голос ещё не подключён', 'error'); return; }
+  const textMode = store.prefs().mode === 'text';
+  if (textMode ? !(state.cfg.textReady ?? state.cfg.ready) : !state.cfg.ready) { toast(textMode ? 'ИИ для диалога не подключён' : 'Голос ещё не подключён', 'error'); return; }
   if (state.cfg.accessCode && !state.cfg.codeOk && !(await askCode())) return;
   stopMicTest();
   const prefs = store.prefs();

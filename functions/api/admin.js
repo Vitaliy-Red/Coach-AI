@@ -2,6 +2,7 @@ import { json, fail, readJson } from '../_lib/http.js';
 import { db, tariffs, costOf, getSetting, setSetting } from '../_lib/usage.js';
 import { TEAMS, LEADERS } from '../_lib/team.js';
 import { adminCheck, adminDenied } from '../_lib/admin-auth.js';
+import { providerConfig, CF_DAILY_NEURONS } from '../_lib/provider.js';
 import { CATALOG, CRITERIA } from '../../assets/js/catalog.js';
 
 // GET /api/admin — баланс, расходы и аналитика команд (для руководителя).
@@ -95,9 +96,24 @@ export async function onRequestGet({ request, env }) {
   }).filter((tm) => tm.id || tm.count);
 
   const answers = await d.prepare('SELECT COUNT(*) AS n, COUNT(DISTINCT sid) AS s FROM answers').first().catch(() => null);
+  // Бесплатный лимит Cloudflare Workers AI: 10 000 нейронов в сутки, сброс в 00:00 UTC (03:00 МСК).
+  const today = new Date().toISOString().slice(0, 10);
+  const cfRows = results.filter((r) => (r.cf_neurons || 0) > 0);
+  const cfToday = cfRows.filter((r) => String(r.created_at).slice(0, 10) === today).reduce((s, r) => s + (r.cf_neurons || 0), 0);
+  const cfPer = cfRows.length ? cfRows.reduce((s, r) => s + r.cf_neurons, 0) / cfRows.length : 0;
+  const pc = providerConfig(env);
   const calls = rows.length;
   return json({
     answers: { count: answers?.n || 0, sessions: answers?.s || 0 },
+    textAi: {
+      provider: pc.textProvider || '',
+      model: pc.text?.model || '',
+      evalModel: pc.text?.evalModel || '',
+      free: pc.textProvider === 'cloudflare',
+      limit: CF_DAILY_NEURONS,
+      usedToday: Math.round(cfToday),
+      perTraining: Math.round(cfPer),
+    },
     open: a.open,
     db: true,
     tariffs: t,
