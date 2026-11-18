@@ -44,7 +44,12 @@ export async function chatCompletion(textCfg, { model, messages, temperature = 0
   });
   const raw = await res.text();
   if (!res.ok) {
-    const err = new Error(`LLM ${res.status}: ${raw.slice(0, 300)}`);
+    const known = {
+      401: 'ИИ не подключён: ключ Yandex Cloud не подходит (код 401).',
+      403: 'ИИ не подключён: в Yandex Cloud не привязан платёжный аккаунт или у ключа нет прав (код 403).',
+      429: 'ИИ перегружен или исчерпан лимит запросов (код 429). Попробуйте через минуту.',
+    };
+    const err = new Error(known[res.status] || `LLM ${res.status}: ${raw.slice(0, 300)}`);
     err.status = res.status;
     throw err;
   }

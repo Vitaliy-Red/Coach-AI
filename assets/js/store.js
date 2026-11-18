@@ -1,6 +1,6 @@
 // Локальное хранилище: имя менеджера, код команды, история тренировок (только в этом браузере).
 
-const K = { profile: 'coach.profile', code: 'coach.code', admin: 'coach.admin', history: 'coach.history.v2', prefs: 'coach.prefs' };
+const K = { profile: 'coach.profile', code: 'coach.code', admin: 'coach.admin', history: 'coach.history.v2', prefs: 'coach.prefs.v2' };
 
 function read(key, def) {
   try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : def; } catch { return def; }
@@ -18,7 +18,7 @@ export const store = {
   setAdminCode(code) { write(K.admin, code); },
   code() { return read(K.code, ''); },
   setCode(code) { write(K.code, code); },
-  prefs() { return { level: 'medium', mode: 'dictation', subs: false, count: '6', ...read(K.prefs, {}) }; },
+  prefs() { return { level: 'medium', mode: 'text', subs: false, count: '6', ...read(K.prefs, {}) }; },
   setPrefs(p) { write(K.prefs, { ...this.prefs(), ...p }); },
   history() { return read(K.history, []); },
   get(id) { return this.history().find((x) => x.id === id) || null; },

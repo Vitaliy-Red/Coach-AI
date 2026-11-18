@@ -1,14 +1,11 @@
-// Диктовка: на экране реальная фраза клиента, менеджер отвечает голосом (распознаёт браузер) или печатает.
-// ИИ для этого не нужен: ответы сохраняются в базу, разбор — если подключена модель.
+// Режим «Фразы»: на экране реальная фраза клиента, менеджер отвечает голосом (распознаёт браузер) или печатает.
+// Фразы не зависят от ответов — это разминка и сбор ответов. ИИ не нужен; разбор — если подключена модель.
 import { api } from './api.js';
 import { findScenario } from './catalog.js';
 import { esc, $, icon, fmtTime, toast } from './ui.js';
+import { SpeechInput, canDictate } from './speech.js';
 
-const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-export const canDictate = Boolean(SR);
-
-const join = (a, b) => [a, b].map((x) => String(x || '').trim()).filter(Boolean).join(' ');
-const capFirst = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+export { canDictate };
 
 export class Dictation {
   constructor({ sid, trainer, data, onDone }) {
@@ -16,18 +13,14 @@ export class Dictation {
     this.trainer = trainer; // что выбрал менеджер (может быть random)
     this.scenario = data.scenario; // реальный тренажёр
     this.questions = data.questions;
-    this.total = data.total;
     this.onDone = onDone;
     this.i = 0;
     this.answers = [];
     this.t0 = performance.now();
     this.qStart = this.t0;
-    this.rec = null;
-    this.recording = false;
-    this.base = '';
-    this.used = { voice: false, typed: false };
-    this.draft = '';
+    this.typed = false;
     this.done = false;
+    this.speech = new SpeechInput({ field: () => $('#ans'), onState: () => this.setMicUi() });
   }
 
   now() { return (performance.now() - this.t0) / 1000; }
@@ -49,7 +42,7 @@ export class Dictation {
     <div class="dict">
       <div class="call-top">
         <div><span class="tag">${esc(real?.group || s?.group || '')}</span><h1 style="margin-top:8px">${esc(real?.title || s?.title || '')}</h1>
-          <p class="muted small">Диктовка · фраза ${this.i + 1} из ${this.questions.length}</p></div>
+          <p class="muted small">Фразы · ${this.i + 1} из ${this.questions.length}</p></div>
         <div class="timer ext" id="timer">${fmtTime(this.now())}</div>
       </div>
       <div class="dict-progress" aria-hidden="true"><i style="width:${pct}%"></i></div>
@@ -60,9 +53,9 @@ export class Dictation {
       </div>
       <div class="dict-a">
         <label for="ans">Ваш ответ</label>
-        <textarea id="ans" placeholder="${canDictate ? 'Нажмите на микрофон и говорите. Или напечатайте ответ.' : 'Напечатайте ответ или включите диктовку системы.'}">${esc(this.draft)}</textarea>
+        <textarea id="ans" placeholder="${canDictate ? 'Нажмите на микрофон и говорите. Или напечатайте ответ.' : 'Напечатайте ответ или включите диктовку системы.'}"></textarea>
         <div class="dict-ctl">
-          <button type="button" class="round mic ${this.recording ? 'rec' : ''}" id="micBtn" aria-pressed="${this.recording}" title="Диктовать">${icon('mic', 28)}</button>
+          <button type="button" class="round mic" id="micBtn" aria-pressed="false" title="Диктовать">${icon('mic', 28)}</button>
           <span class="dict-state" id="micState" aria-live="polite">${this.micLabel()}</span>
           <span class="grow"></span>
           <button type="button" class="btn btn-ghost" id="skipBtn">Пропустить</button>
@@ -81,19 +74,18 @@ export class Dictation {
 
   micLabel() {
     if (!canDictate) return 'Распознавание недоступно';
-    return this.recording ? 'Идёт запись — говорите. Нажмите, чтобы остановить' : 'Нажмите и говорите';
+    return this.speech?.recording ? 'Идёт запись — говорите. Нажмите, чтобы остановить' : 'Нажмите и говорите';
   }
 
   bind() {
     const ta = $('#ans');
     ta.addEventListener('input', () => {
-      this.draft = ta.value;
-      if (this.recording) this.stopMic(true); // начали править руками — останавливаем запись
-      this.base = ta.value;
-      this.used.typed = true;
+      if (this.speech.recording) this.speech.stop(true); // начали править руками — останавливаем запись
+      this.speech.base = ta.value;
+      this.typed = true;
     });
     ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); this.next(false); } });
-    $('#micBtn').addEventListener('click', () => (this.recording ? this.stopMic(false) : this.startMic()));
+    $('#micBtn').addEventListener('click', () => this.speech.toggle());
     $('#nextBtn').addEventListener('click', () => this.next(false));
     $('#skipBtn').addEventListener('click', () => this.next(true));
     if (!canDictate) setTimeout(() => ta.focus(), 50);
@@ -101,103 +93,28 @@ export class Dictation {
 
   setMicUi() {
     const b = $('#micBtn');
-    if (b) { b.classList.toggle('rec', this.recording); b.setAttribute('aria-pressed', String(this.recording)); }
+    if (b) { b.classList.toggle('rec', this.speech.recording); b.setAttribute('aria-pressed', String(this.speech.recording)); }
     const st = $('#micState');
     if (st) st.textContent = this.micLabel();
   }
 
-  startMic() {
-    if (!SR) {
-      toast('Распознавание речи есть в Chrome и Edge. Или включите диктовку Windows: Win + H', 'error');
-      $('#ans')?.focus();
-      return;
-    }
-    this.base = $('#ans')?.value || '';
-    this.recording = true;
-    this.used.voice = true;
-    this.setMicUi();
-    this.listen();
-  }
-
-  listen() {
-    let rec;
-    try {
-      rec = new SR();
-    } catch {
-      this.recording = false;
-      this.setMicUi();
-      return;
-    }
-    rec.lang = 'ru-RU';
-    rec.continuous = true;
-    rec.interimResults = true;
-    let fin = '';
-    rec.onresult = (e) => {
-      if (this.rec !== rec) return;
-      fin = '';
-      let interim = '';
-      for (let i = 0; i < e.results.length; i++) {
-        const t = e.results[i][0]?.transcript || '';
-        if (e.results[i].isFinal) fin = join(fin, t); else interim = join(interim, t);
-      }
-      const ta = $('#ans');
-      const text = capFirst(join(this.base, join(fin, interim)));
-      if (ta) { ta.value = text; ta.scrollTop = ta.scrollHeight; }
-      this.draft = text;
-    };
-    rec.onerror = (e) => {
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-        toast('Нет доступа к микрофону. Разрешите его в адресной строке браузера.', 'error');
-        this.recording = false;
-      } else if (e.error === 'network') {
-        toast('Распознавание речи сейчас недоступно. Напечатайте ответ или включите диктовку Windows: Win + H', 'error');
-        this.recording = false;
-      } else if (e.error === 'audio-capture') {
-        toast('Микрофон не найден.', 'error');
-        this.recording = false;
-      }
-      this.setMicUi();
-    };
-    rec.onend = () => {
-      if (this.rec !== rec) return; // запись остановили правкой текста или переходом к следующей фразе
-      this.base = capFirst(join(this.base, fin));
-      this.draft = this.base;
-      const ta = $('#ans');
-      if (ta) ta.value = this.base;
-      if (this.recording && !this.done) this.listen(); // браузер сам останавливает распознавание после паузы — продолжаем
-      else this.rec = null;
-    };
-    this.rec = rec;
-    try { rec.start(); } catch { this.recording = false; this.setMicUi(); }
-  }
-
-  // detach — текст из поля уже окончательный, итог распознавания не дописывать.
-  stopMic(detach = false) {
-    this.recording = false;
-    const rec = this.rec;
-    if (detach) this.rec = null;
-    if (rec) { try { rec.stop(); } catch {} }
-    this.setMicUi();
-  }
-
-  async next(skip) {
+  next(skip) {
     if (this.done) return;
-    const ta = $('#ans');
-    this.stopMic(true);
-    const answer = skip ? '' : String(ta?.value || '').trim();
+    this.speech.stop(true);
+    const answer = skip ? '' : String($('#ans')?.value || '').trim();
     if (!skip && !answer) { toast('Скажите или напишите ответ. Или нажмите «Пропустить».', 'error'); return; }
     const q = this.questions[this.i];
     const seconds = Math.round((performance.now() - this.qStart) / 1000);
-    const source = skip ? 'skip' : this.used.voice && this.used.typed ? 'mixed' : this.used.voice ? 'voice' : 'typed';
+    const voice = this.speech.used;
+    const source = skip ? 'skip' : voice && this.typed ? 'mixed' : voice ? 'voice' : 'typed';
     const item = { step: this.i, key: q.key, question: q.text, answer, seconds, source, t: Math.round(this.now() * 10) / 10 };
     this.answers.push(item);
     // Запись в базу — в фоне: при ошибке ответ всё равно останется в разборе на этом компьютере.
     api.saveAnswer({ sid: this.sid, scenario: this.scenario, trainer: this.trainer, step: item.step, key: item.key, answer, seconds, source, totalSec: Math.round(this.now()) })
       .catch((e) => toast('Ответ не сохранился на сервере: ' + e.message, 'error'));
     this.i += 1;
-    this.draft = '';
-    this.base = '';
-    this.used = { voice: false, typed: false };
+    this.speech.reset();
+    this.typed = false;
     this.qStart = performance.now();
     if (this.i >= this.questions.length) return this.finish();
     this.render();
@@ -207,7 +124,7 @@ export class Dictation {
   // Ушли со страницы — останавливаем микрофон. Ответы уже на сервере.
   abort() {
     this.done = true;
-    this.stopMic(true);
+    this.speech.stop(true);
     clearInterval(this.timer);
   }
 

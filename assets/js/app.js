@@ -6,7 +6,8 @@ import { VoiceCall } from './voice.js';
 import { TextCall } from './textcall.js';
 import { esc, $, $$, icon, LOGO, fmtTime, fmtDate, plural, toast, promptModal } from './ui.js';
 import { leaderPage } from './leader.js';
-import { Dictation, canDictate } from './dictation.js';
+import { Dictation } from './dictation.js';
+import { SpeechInput, canDictate } from './speech.js';
 
 const app = $('#app');
 const state = {
@@ -20,12 +21,13 @@ const state = {
   teams: null,
   leaders: [],
   dict: null,
+  speech: null,
   adminData: null,
   team: 'all',
 };
 
 const LEVEL_NAME = { easy: 'Лёгкий', medium: 'Средний', hard: 'Трудный', auto: 'Случайная сложность' };
-const MODE_NAME = { voice: 'Голос', text: 'Текст', dictation: 'Диктовка' };
+const MODE_NAME = { voice: 'Голос', text: 'Диалог', dictation: 'Фразы' };
 
 // ---------- запуск ----------
 init();
@@ -138,6 +140,7 @@ async function askCode() {
 function route() {
   const parts = (location.hash.replace(/^#\/?/, '') || '').split('/').filter(Boolean);
   if (state.session && !state.session.ended && parts[0] !== 'call') state.session.hangup();
+  if (state.speech && parts[0] !== 'call') { state.speech.stop(true); state.speech = null; }
   if (state.dict && parts[0] !== 'd') { state.dict.abort(); state.dict = null; }
   stopMicTest();
   const navKey = ['history', 'analytics', 'admin'].includes(parts[0]) ? parts[0] : parts.length ? '' : 'home';
@@ -241,18 +244,22 @@ function briefView(id) {
   const levels = isRandom ? [{ id: 'auto', name: 'Случайно' }, ...LEVELS] : LEVELS;
   const level = levels.some((l) => l.id === prefs.level) ? prefs.level : isRandom ? 'auto' : 'medium';
   const hint = LEVELS.find((l) => l.id === level)?.hint || 'Сложность выпадет по частотам из реальных звонков.';
-  const mode = ['voice', 'text', 'dictation'].includes(prefs.mode) ? prefs.mode : 'dictation';
+  const mode = ['voice', 'text', 'dictation'].includes(prefs.mode) ? prefs.mode : 'text';
   const dict = mode === 'dictation';
   const counts = [['6', '6 фраз'], ['10', '10 фраз'], ['all', 'Все']];
   const count = counts.some(([v]) => v === String(prefs.count)) ? String(prefs.count) : '6';
   const modeHint = {
-    dictation: 'Читаете реальную фразу клиента и отвечаете голосом — браузер переводит речь в текст. Можно печатать. ИИ не нужен.',
+    text: 'Живой диалог: клиента играет ИИ по портрету из реальных звонков и отвечает на ваши слова текстом. Вы отвечаете голосом — браузер переводит речь в текст — или печатаете.',
     voice: 'Разговор голосом, как по телефону. Клиента играет ИИ.',
-    text: 'Пишете реплики, клиент отвечает текстом. Для тех, у кого нет микрофона.',
+    dictation: 'Разминка без ИИ: реальные фразы клиента по одной, вы отвечаете на каждую. Фразы не зависят от ваших ответов.',
   }[mode];
-  const tips = dict
-    ? [['quote', 'Фразы — дословно из расшифровок звонков, по порядку разговора.'], ['ear', 'Отвечайте так, как сказали бы клиенту. Текст можно поправить.'], ['info', canDictate ? 'Распознавание речи работает в Chrome и Edge.' : 'В этом браузере нет распознавания речи: откройте Chrome или Edge либо нажмите Win + H для диктовки Windows.']]
-    : [['headset', 'Наденьте гарнитуру: так клиент не услышит сам себя из динамиков.'], ['ear', 'Говорите как в настоящем звонке. Клиента можно перебивать.'], ['clock', 'Обычно звонок длится 3–8 минут.']];
+  const sttTip = ['info', canDictate ? 'Распознавание речи работает в Chrome и Edge.' : 'В этом браузере нет распознавания речи: откройте Chrome или Edge либо нажмите Win + H для диктовки Windows.'];
+  const tips = {
+    text: [['quote', 'У клиента легенда, возражения и фразы из расшифровок звонков. Он помнит, что вы сказали.'], ['mic', 'Нажмите на микрофон рядом с полем и говорите. Текст можно поправить перед отправкой.'], sttTip],
+    dictation: [['quote', 'Фразы — дословно из расшифровок звонков.'], ['ear', 'Отвечайте так, как сказали бы клиенту. Текст можно поправить.'], sttTip],
+    voice: [['headset', 'Наденьте гарнитуру: так клиент не услышит сам себя из динамиков.'], ['ear', 'Говорите как в настоящем звонке. Клиента можно перебивать.'], ['clock', 'Обычно звонок длится 3–8 минут.']],
+  }[mode];
+  const startLabel = { text: `${icon('mic', 22)} Начать диалог`, voice: `${icon('phone', 22)} Позвонить клиенту`, dictation: `${icon('quote', 22)} Начать` }[mode];
   const canStart = dict ? !state.cfg.offline : state.cfg.ready;
   return `
   <a class="back" href="#/">${icon('back', 20)} Все тренажёры</a>
@@ -274,12 +281,12 @@ function briefView(id) {
       </div>
     </div>
     <aside class="panel" aria-label="Настройка звонка">
-      <h2>${dict ? 'Настройка тренировки' : 'Настройка звонка'}</h2>
+      <h2>${mode === 'voice' ? 'Настройка звонка' : 'Настройка тренировки'}</h2>
       <div class="field"><span>Режим</span>
         <div class="seg" data-seg="mode">
-          <button type="button" data-v="dictation" class="${dict ? 'on' : ''}">Диктовка</button>
+          <button type="button" data-v="text" class="${mode === 'text' ? 'on' : ''}">Диалог</button>
           <button type="button" data-v="voice" class="${mode === 'voice' ? 'on' : ''}">Голос</button>
-          <button type="button" data-v="text" class="${mode === 'text' ? 'on' : ''}">Текст</button>
+          <button type="button" data-v="dictation" class="${dict ? 'on' : ''}">Фразы</button>
         </div>
         <p class="hint">${esc(modeHint)}</p>
       </div>
@@ -292,11 +299,11 @@ function briefView(id) {
         <div class="seg" data-seg="level">${levels.map((l) => `<button type="button" data-v="${l.id}" class="${l.id === level ? 'on' : ''}">${esc(l.name)}</button>`).join('')}</div>
         <p class="hint" id="levelHint">${esc(hint)}</p>
       </div>`}
-      <div class="field" ${mode === 'text' ? 'hidden' : ''}><span>Микрофон</span>
+      <div class="field"><span>Микрофон</span>
         <div class="miccheck"><button type="button" class="btn btn-outline btn-sm" id="micTest">${icon('mic', 18)} Проверить</button><div class="meter" aria-hidden="true"><i id="micLevel"></i></div></div>
       </div>
       <div class="tips">${tips.map(([ic, t]) => `<div>${icon(ic, 20)}<span>${esc(t)}</span></div>`).join('')}</div>
-      <button type="button" class="btn btn-primary btn-lg" id="startCall" ${canStart ? '' : 'disabled'}>${dict ? `${icon('mic', 22)} Начать диктовку` : `${icon('phone', 22)} Позвонить клиенту`}</button>
+      <button type="button" class="btn btn-primary btn-lg" id="startCall" ${canStart ? '' : 'disabled'}>${startLabel}</button>
       ${dict ? '' : configNote()}
     </aside>
   </div>`;
@@ -439,8 +446,12 @@ function callView() {
       ${text ? '' : `<div class="ctl"><button class="round ${state.subs ? 'on' : ''}" id="subsBtn" aria-pressed="${state.subs}" title="Показать текст разговора">${icon('captions', 28)}</button><span class="round-label">Текст</span></div>`}
     </div>
     <div class="subs" id="subs" ${state.subs ? '' : 'hidden'} aria-live="polite"></div>
-    ${text ? `<form class="composer" id="composer"><textarea id="reply" placeholder="Ваша реплика… Enter — отправить" aria-label="Реплика менеджера"></textarea><button class="btn btn-primary" type="submit">${icon('send', 20)}</button></form>` : ''}
-    <p class="tipline">${text ? 'Пишите так, как сказали бы вслух.' : 'Клиента можно перебивать.'} Завершите звонок, когда договоритесь о шаге или получите отказ.</p>
+    ${text ? `<form class="composer" id="composer">
+      <button type="button" class="round mic" id="dictBtn" aria-pressed="false" title="Диктовать ответ">${icon('mic', 26)}</button>
+      <textarea id="reply" placeholder="${canDictate ? 'Нажмите на микрофон и говорите или печатайте. Enter — отправить' : 'Ваша реплика… Enter — отправить'}" aria-label="Реплика менеджера"></textarea>
+      <button class="btn btn-primary" type="submit" title="Отправить">${icon('send', 20)}</button></form>
+      <p class="dict-state small" id="dictState" aria-live="polite"></p>` : ''}
+    <p class="tipline">${text ? 'Отвечайте так, как сказали бы клиенту по телефону.' : 'Клиента можно перебивать.'} Завершите, когда договоритесь о шаге или получите отказ.</p>
   </div>`;
 }
 
@@ -467,10 +478,31 @@ function bindCall() {
   const form = $('#composer');
   if (form) {
     const ta = $('#reply');
-    const send = () => { const v = ta.value; ta.value = ''; s.send(v); };
+    const mic = $('#dictBtn');
+    const speech = new SpeechInput({
+      field: () => $('#reply'),
+      onState: (rec) => {
+        mic.classList.toggle('rec', rec);
+        mic.setAttribute('aria-pressed', String(rec));
+        const st = $('#dictState');
+        if (st) st.textContent = rec ? 'Идёт запись — говорите. Enter или кнопка справа — отправить.' : '';
+      },
+    });
+    state.speech = speech;
+    const send = () => {
+      if (s.busy) { toast('Клиент ещё отвечает — дождитесь его реплики', 'info'); return; }
+      speech.stop(true);
+      const v = ta.value;
+      if (!v.trim()) return;
+      ta.value = '';
+      speech.reset();
+      s.send(v);
+    };
+    mic.addEventListener('click', () => speech.toggle());
     form.addEventListener('submit', (e) => { e.preventDefault(); send(); });
+    ta.addEventListener('input', () => { if (speech.recording) speech.stop(true); });
     ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
-    setTimeout(() => ta.focus(), 50);
+    if (!canDictate) setTimeout(() => ta.focus(), 50);
   }
 }
 
@@ -589,7 +621,7 @@ function resultView(id) {
   const m = e.metrics || metrics(e.transcript, e.durationSec);
   const dict = e.mode === 'dictation';
   const head = `<a class="back" href="#/">${icon('back', 20)} Все тренажёры</a>`;
-  const tags = `<span class="tag">${esc(s.title)}</span>${e.scenario === 'random' && real ? `<span class="tag tag-mint">Это был: ${esc(real.title)}</span>` : ''}<span class="tag">${esc(dict ? 'Диктовка' : LEVEL_NAME[e.level] || '')}</span><span class="tag">${icon('clock', 16)} ${fmtTime(e.durationSec)}</span>`;
+  const tags = `<span class="tag">${esc(s.title)}</span>${e.scenario === 'random' && real ? `<span class="tag tag-mint">Это был: ${esc(real.title)}</span>` : ''}<span class="tag">${esc(dict ? 'Фразы' : LEVEL_NAME[e.level] || '')}${e.mode === 'text' ? ' · диалог' : ''}</span><span class="tag">${icon('clock', 16)} ${fmtTime(e.durationSec)}</span>`;
   const metricsHtml = dict ? dictMetrics(e) : `
     <section class="section"><div class="metrics">
       <div class="metric"><b class="ext">${fmtTime(m.duration)}</b><span>длительность</span></div>
@@ -672,7 +704,7 @@ function dictMetrics(e) {
   const skipped = (e.answers || []).length - list.length;
   return `
     <section class="section"><div class="metrics">
-      <div class="metric"><b class="ext">${fmtTime(e.durationSec)}</b><span>на всю диктовку</span></div>
+      <div class="metric"><b class="ext">${fmtTime(e.durationSec)}</b><span>на все фразы</span></div>
       <div class="metric ${avgWords > 60 ? 'warn' : ''}"><b class="ext">${avgWords}</b><span>слов в среднем ответе${avgWords > 60 ? ' — длинно' : ''}</span></div>
       <div class="metric ${skipped ? 'warn' : ''}"><b class="ext">${skipped}</b><span>${plural(skipped, 'фраза пропущена', 'фразы пропущено', 'фраз пропущено')}</span></div>
       <div class="metric"><b class="ext">${fmtTime(avgSec)}</b><span>в среднем на ответ</span></div>

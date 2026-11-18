@@ -49,6 +49,6 @@ export async function onRequestPost({ request, env, waitUntil }) {
     reply = reply.replace(END_MARK, '').replace(/^["«]|["»]$/g, '').trim();
     return json({ reply: reply || 'Алло?', ended, resolved });
   } catch (e) {
-    return fail(502, 'llm', 'Модель не ответила: ' + e.message);
+    return fail(502, 'llm', [401, 403, 429].includes(e.status) ? e.message : 'Модель не ответила: ' + e.message);
   }
 }
