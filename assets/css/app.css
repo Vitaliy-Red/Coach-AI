@@ -496,3 +496,15 @@ td .t { display: block; font-size: 12px; color: var(--table); }
 .ans p { margin-top: 6px; }
 .dict .tipline { margin-top: 14px; }
 @media (hover: none) { .kbd-hint { display: none; } }
+
+/* ---------- диалог: ответ голосом ---------- */
+.composer { align-items: flex-end; }
+.composer .round.mic { width: 56px; height: 56px; flex: none; }
+.composer textarea { height: 88px; resize: vertical; font-size: 17px; line-height: 1.4; }
+.call .dict-state { min-height: 20px; margin-top: 6px; text-align: left; max-width: none; color: var(--red); }
+.call .dict-state { color: var(--green-dark); }
+@media (max-width: 640px) {
+  .call.is-text .stage { height: 96px; }
+  .call.is-text .avatar, .call.is-text .ring { width: 88px; height: 88px; }
+  .call.is-text .avatar b { display: none; }
+}

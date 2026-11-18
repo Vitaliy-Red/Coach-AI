@@ -113,7 +113,7 @@ function adminView(d) {
         <td>${esc(fmtDate(r.at))}</td>
         <td>${esc(r.manager || '—')}<span class="t">${esc(teamName(d, r.team))}</span></td>
         <td>${esc(r.trainer)}${r.real ? `<span class="t">${esc(r.real)}</span>` : ''}</td>
-        <td>${r.mode === 'text' ? 'Текст' : r.mode === 'dictation' ? 'Диктовка' : 'Голос'}</td>
+        <td>${r.mode === 'text' ? 'Диалог' : r.mode === 'dictation' ? 'Фразы' : 'Голос'}</td>
         <td>${fmtTime(r.duration)}</td>
         <td>${rub(r.cost)}</td>
         <td>${r.score === null || r.score === undefined ? '—' : `<b>${r.score}</b> / 4`}</td></tr>`).join('')}</tbody>
@@ -140,7 +140,7 @@ function analyticsView(d) {
 
   return `
   <div class="section-head" style="margin-bottom:20px">
-    <div><h1 style="font-size:40px">Аналитика тренировок</h1><p class="muted">Баллы — по тренировкам с разбором. Ответы из диктовки — ниже, все подряд.</p></div>
+    <div><h1 style="font-size:40px">Аналитика тренировок</h1><p class="muted">Баллы — по тренировкам с разбором. Ответы на фразы клиентов — ниже.</p></div>
   </div>
   <div class="chips" role="group" aria-label="Команда" style="margin-bottom:24px">${chips.map(([id, name]) => `<button class="chip ${teamFilter === id ? 'on' : ''}" data-team="${id}">${esc(name)}</button>`).join('')}</div>
   <div class="stats">
@@ -177,7 +177,7 @@ function analyticsView(d) {
   ${answersView(d)}`;
 }
 
-// ---------- Ответы из диктовки: фраза клиента → что ответили менеджеры ----------
+// ---------- Режим «Фразы»: фраза клиента → что ответили менеджеры ----------
 function answersInScope(d) {
   const all = (answersData?.answers || []).filter((a) => a.source !== 'skip');
   if (teamFilter === 'all') return all;
@@ -200,7 +200,7 @@ function answersView(d) {
   return `
   <section class="section" id="answers">
     <div class="section-head" style="margin-bottom:16px">
-      <div><h2 style="font-size:28px">Ответы из диктовки</h2><p class="muted">${list.length} ${plural(list.length, 'ответ', 'ответа', 'ответов')} · ${people} ${plural(people, 'сотрудник', 'сотрудника', 'сотрудников')}. Фраза клиента — и что на неё ответили.</p></div>
+      <div><h2 style="font-size:28px">Ответы на фразы клиентов</h2><p class="muted">${list.length} ${plural(list.length, 'ответ', 'ответа', 'ответов')} · ${people} ${plural(people, 'сотрудник', 'сотрудника', 'сотрудников')}. Фраза клиента — и что на неё ответили.</p></div>
       ${list.length ? `<button class="btn btn-outline" id="answersCsv">${icon('download', 20)} Выгрузить ответы CSV</button>` : ''}
     </div>
     ${trainers.length > 1 ? `<div class="chips" style="margin-bottom:18px">${[['all', 'Все тренажёры'], ...trainers].map(([id, name]) => `<button class="chip ${trainerFilter === id ? 'on' : ''}" data-trainer="${esc(id)}">${esc(name)}</button>`).join('')}</div>` : ''}
@@ -210,7 +210,7 @@ function answersView(d) {
         <div class="ans-list">${g.items.map((a) => `
           <div class="ans"><div class="ans-who"><b>${esc(a.manager || 'Без имени')}</b><span>${esc(teamName(d, a.team))} · ${esc(fmtDate(a.at))} · ${a.words} ${plural(a.words, 'слово', 'слова', 'слов')} · ${fmtTime(a.seconds)}${a.source === 'typed' ? ' · печатал' : ''}</span></div><p>${esc(a.answer)}</p></div>`).join('')}
         </div>
-      </details>`).join('') : '<p class="muted">Пока никто не проходил диктовку.</p>'}
+      </details>`).join('') : '<p class="muted">Пока никто не проходил режим «Фразы».</p>'}
   </section>`;
 }
 
