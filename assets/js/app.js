@@ -8,6 +8,7 @@ import { esc, $, $$, icon, LOGO, fmtTime, fmtDate, plural, toast, promptModal } 
 import { leaderPage } from './leader.js';
 import { Dictation } from './dictation.js';
 import { SpeechInput, canDictate } from './speech.js';
+import { BrowserVoiceCall, canBrowserVoice } from './browservoice.js';
 
 const app = $('#app');
 const state = {
@@ -250,17 +251,23 @@ function briefView(id) {
   const count = counts.some(([v]) => v === String(prefs.count)) ? String(prefs.count) : '6';
   const modeHint = {
     text: 'Живой диалог: клиента играет ИИ по портрету из реальных звонков и отвечает на ваши слова текстом. Вы отвечаете голосом — браузер переводит речь в текст — или печатаете.',
-    voice: 'Разговор голосом, как по телефону. Клиента играет ИИ.',
+    voice: freeVoice()
+      ? 'Звонок голосом, бесплатно: клиент отвечает вслух голосом браузера, вы говорите в микрофон. Реплика уходит сама после паузы.'
+      : 'Разговор голосом, как по телефону. Клиента играет ИИ.',
     dictation: 'Разминка без ИИ: реальные фразы клиента по одной, вы отвечаете на каждую. Фразы не зависят от ваших ответов.',
   }[mode];
   const sttTip = ['info', canDictate ? 'Распознавание речи работает в Chrome и Edge.' : 'В этом браузере нет распознавания речи: откройте Chrome или Edge либо нажмите Win + H для диктовки Windows.'];
   const tips = {
     text: [['quote', 'У клиента легенда, возражения и фразы из расшифровок звонков. Он помнит, что вы сказали.'], ['mic', 'Нажмите на микрофон рядом с полем и говорите. Текст можно поправить перед отправкой.'], sttTip],
     dictation: [['quote', 'Фразы — дословно из расшифровок звонков.'], ['ear', 'Отвечайте так, как сказали бы клиенту. Текст можно поправить.'], sttTip],
-    voice: [['headset', 'Наденьте гарнитуру: так клиент не услышит сам себя из динамиков.'], ['ear', 'Говорите как в настоящем звонке. Клиента можно перебивать.'], ['clock', 'Обычно звонок длится 3–8 минут.']],
+    voice: freeVoice()
+      ? [['ear', 'Дождитесь, пока клиент договорит: перебивать его в этом режиме нельзя.'], ['clock', 'Закончили фразу — помолчите 2 секунды, и она уйдёт клиенту. Или нажмите «Ответил».'], ['info', canBrowserVoice ? 'Живее всего звучит Edge: там голоса Microsoft. В Chrome — голос Google.' : 'В этом браузере нет голосового режима: откройте Chrome или Edge.']]
+      : [['headset', 'Наденьте гарнитуру: так клиент не услышит сам себя из динамиков.'], ['ear', 'Говорите как в настоящем звонке. Клиента можно перебивать.'], ['clock', 'Обычно звонок длится 3–8 минут.']],
   }[mode];
   const startLabel = { text: `${icon('mic', 22)} Начать диалог`, voice: `${icon('phone', 22)} Позвонить клиенту`, dictation: `${icon('quote', 22)} Начать` }[mode];
-  const canStart = dict ? !state.cfg.offline : mode === 'text' ? (state.cfg.textReady ?? state.cfg.ready) : state.cfg.ready;
+  const canStart = dict ? !state.cfg.offline
+    : mode === 'text' ? (state.cfg.textReady ?? state.cfg.ready)
+      : freeVoice() ? Boolean(state.cfg.textReady) && canBrowserVoice : state.cfg.ready;
   return `
   <a class="back" href="#/">${icon('back', 20)} Все тренажёры</a>
   <div class="brief">
@@ -304,8 +311,8 @@ function briefView(id) {
       </div>
       <div class="tips">${tips.map(([ic, t]) => `<div>${icon(ic, 20)}<span>${esc(t)}</span></div>`).join('')}</div>
       <button type="button" class="btn btn-primary btn-lg" id="startCall" ${canStart ? '' : 'disabled'}>${startLabel}</button>
-      ${dict || (mode === 'text' && state.cfg.textReady) ? '' : configNote()}
-      ${mode === 'text' && state.cfg.textProvider === 'cloudflare' ? `<p class="hint">Клиента играет бесплатная открытая модель. Дневной лимит общий на всех, обновляется в 03:00 по Москве.</p>` : ''}
+      ${dict || ((mode === 'text' || freeVoice()) && state.cfg.textReady) ? '' : configNote()}
+      ${(mode === 'text' || (mode === 'voice' && freeVoice())) && state.cfg.textProvider === 'cloudflare' ? `<p class="hint">Клиента играет бесплатная открытая модель. Дневной лимит общий на всех, обновляется в 03:00 по Москве.</p>` : ''}
     </aside>
   </div>`;
 }
@@ -390,9 +397,15 @@ async function startDictation(id) {
   location.hash = '#/d';
 }
 
+// Голос без оплаты: голос браузера + открытая модель. VOICE_ENGINE=realtime — живой голос Yandex.
+function freeVoice() { return state.cfg.voiceEngine !== 'realtime'; }
+
 async function startCall(id) {
   const textMode = store.prefs().mode === 'text';
-  if (textMode ? !(state.cfg.textReady ?? state.cfg.ready) : !state.cfg.ready) { toast(textMode ? 'ИИ для диалога не подключён' : 'Голос ещё не подключён', 'error'); return; }
+  const lite = !textMode && freeVoice();
+  const ok = textMode || lite ? (state.cfg.textReady ?? state.cfg.ready) : state.cfg.ready;
+  if (!ok) { toast(textMode || lite ? 'ИИ для диалога не подключён' : 'Голос ещё не подключён', 'error'); return; }
+  if (lite && !canBrowserVoice) { toast('Голосовой режим работает в Chrome и Edge. Откройте сайт в одном из них.', 'error'); return; }
   if (state.cfg.accessCode && !state.cfg.codeOk && !(await askCode())) return;
   stopMicTest();
   const prefs = store.prefs();
@@ -402,7 +415,7 @@ async function startCall(id) {
   else if (!['easy', 'medium', 'hard'].includes(level)) level = 'medium';
   const mode = prefs.mode === 'text' ? 'text' : 'voice';
   const sid = newSid();
-  state.meta = { scenario: id, level, mode, sid, startedAt: new Date().toISOString(), title: s.title };
+  state.meta = { scenario: id, level, mode, sid, startedAt: new Date().toISOString(), title: s.title, engine: lite ? 'browser' : mode === 'voice' ? 'realtime' : '' };
   state.subs = mode === 'text' ? true : Boolean(prefs.subs);
   const handlers = {
     onState: (kind, text) => { const el = $('#status'); if (el) { el.textContent = text; el.classList.toggle('err', kind === 'error'); } },
@@ -411,8 +424,10 @@ async function startCall(id) {
     onTick: (t) => { const el = $('#timer'); if (el) el.textContent = fmtTime(t); },
     onWarn: (msg, kind) => toast(msg, kind === 'error' ? 'error' : 'info'),
     onEnd: (result) => endCall(result),
+    onHeard: (text) => { const el = $('#heard'); if (el) { el.textContent = text ? '«' + text + '»' : ''; } },
   };
-  const session = mode === 'text' ? new TextCall({ scenario: id, level, sid, on: handlers }) : new VoiceCall({ scenario: id, level, sid, on: handlers });
+  const Engine = mode === 'text' ? TextCall : lite ? BrowserVoiceCall : VoiceCall;
+  const session = new Engine({ scenario: id, level, sid, on: handlers });
   state.session = session;
   const start = session.start(); // звук включаем сразу в обработчике клика
   location.hash = '#/call';
@@ -442,9 +457,11 @@ function callView() {
     </div>
     <p class="status" id="status" aria-live="polite">${text ? 'Соединяем…' : 'Подключаем микрофон…'}</p>
     ${text ? '' : `<div class="you"><span>Вы</span><div class="meter" aria-hidden="true"><i id="youLevel"></i></div></div>`}
+    ${m.engine === 'browser' ? '<p class="heard" id="heard" aria-live="polite"></p>' : ''}
     <div class="controls">
       ${text ? '' : `<div class="ctl"><button class="round" id="muteBtn" aria-pressed="false" title="Выключить микрофон">${icon('mic', 28)}</button><span class="round-label">Микрофон</span></div>`}
       <div class="ctl"><button class="round hang" id="hangBtn" title="Завершить звонок">${icon('hangup', 38)}</button><span class="round-label">Завершить</span></div>
+      ${m.engine === 'browser' ? `<div class="ctl"><button class="round" id="doneBtn" title="Закончил фразу — отправить клиенту">${icon('send', 26)}</button><span class="round-label">Ответил</span></div>` : ''}
       ${text ? '' : `<div class="ctl"><button class="round ${state.subs ? 'on' : ''}" id="subsBtn" aria-pressed="${state.subs}" title="Показать текст разговора">${icon('captions', 28)}</button><span class="round-label">Текст</span></div>`}
     </div>
     <div class="subs" id="subs" ${state.subs ? '' : 'hidden'} aria-live="polite"></div>
@@ -453,7 +470,7 @@ function callView() {
       <textarea id="reply" placeholder="${canDictate ? 'Нажмите на микрофон и говорите или печатайте. Enter — отправить' : 'Ваша реплика… Enter — отправить'}" aria-label="Реплика менеджера"></textarea>
       <button class="btn btn-primary" type="submit" title="Отправить">${icon('send', 20)}</button></form>
       <p class="dict-state small" id="dictState" aria-live="polite"></p>` : ''}
-    <p class="tipline">${text ? 'Отвечайте так, как сказали бы клиенту по телефону.' : 'Клиента можно перебивать.'} Завершите, когда договоритесь о шаге или получите отказ.</p>
+    <p class="tipline">${text ? 'Отвечайте так, как сказали бы клиенту по телефону.' : m.engine === 'browser' ? 'Дождитесь, пока клиент договорит. Закончили фразу — помолчите 2 секунды или нажмите «Ответил».' : 'Клиента можно перебивать.'} Завершите, когда договоритесь о шаге или получите отказ.</p>
   </div>`;
 }
 
@@ -462,6 +479,7 @@ function bindCall() {
   if (!s) return;
   renderSubs(s.transcript());
   $('#hangBtn').addEventListener('click', () => s.hangup());
+  $('#doneBtn')?.addEventListener('click', () => s.flush?.());
   $('#muteBtn')?.addEventListener('click', (e) => {
     const b = e.currentTarget;
     const m = b.getAttribute('aria-pressed') !== 'true';

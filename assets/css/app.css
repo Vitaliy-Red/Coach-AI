@@ -508,3 +508,4 @@ td .t { display: block; font-size: 12px; color: var(--table); }
   .call.is-text .avatar, .call.is-text .ring { width: 88px; height: 88px; }
   .call.is-text .avatar b { display: none; }
 }
+.call .heard { min-height: 26px; margin-top: 10px; font-size: 16px; color: var(--table); font-style: italic; }

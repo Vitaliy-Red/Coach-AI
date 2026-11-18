@@ -42,7 +42,7 @@ export async function onRequestPost({ request, env, waitUntil }) {
     const out = await chatCompletion(cfg.text, { messages, temperature: 0.8, maxTokens: 300 });
     let reply = out.text;
     const usageWrite = addUsage(env, body.sid,
-      { manager: body.manager, team: body.team, scenario: reqId, realScenario: resolved.id, level: resolved.level, mode: 'text' },
+      { manager: body.manager, team: body.team, scenario: reqId, realScenario: resolved.id, level: resolved.level, mode: body.mode === 'voice' ? 'voice' : 'text' },
       { ...usageFrom(out.usage), durationSec: body.durationSec });
     if (waitUntil) waitUntil(usageWrite);
     const ended = END_MARK.test(reply);
