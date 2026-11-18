@@ -641,7 +641,7 @@ function resultView(id) {
 
   if (busy) {
     return `${head}
-      <div class="loader"><h1 class="ext" style="font-size:34px">Тренер разбирает ${dict ? 'ответы' : 'звонок'}</h1><p class="muted" style="margin-top:8px">Обычно это 10–20 секунд.</p><div class="dots"><i></i><i></i><i></i></div></div>
+      <div class="loader"><h1 class="ext" style="font-size:34px">Тренер разбирает ${dict ? 'ответы' : 'звонок'}</h1><p class="muted" style="margin-top:8px">Обычно это 15–30 секунд.</p><div class="dots"><i></i><i></i><i></i></div></div>
       ${metricsHtml}${transcriptHtml}`;
   }
   if (!ev && dict) {
