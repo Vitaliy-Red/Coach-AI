@@ -46,9 +46,18 @@ export class VoiceCall {
       });
     } catch (e) {
       this.cleanup();
+      if (this.ended) return;
       throw Object.assign(new Error('Нет доступа к микрофону. Разрешите его в адресной строке браузера и попробуйте снова.'), { code: 'mic' });
     }
-    await this.ctx.audioWorklet.addModule(new URL('./worklet.js', import.meta.url).href);
+    if (this.ended) { this.cleanup(); return; }
+    try {
+      await this.ctx.audioWorklet.addModule(new URL('./worklet.js', import.meta.url).href);
+    } catch (err) {
+      this.cleanup();
+      if (this.ended) return;
+      throw err;
+    }
+    if (this.ended) return;
 
     // Выход: клиент → анализатор (для анимации) → динамики
     this.outGain = this.ctx.createGain();
@@ -64,7 +73,7 @@ export class VoiceCall {
     this.state('connecting', 'Соединяем…');
     this.ws = new WebSocket(api.realtimeUrl({ scenario: this.scenario, level: this.level, sid: this.sid }));
     this.ws.onmessage = (e) => { try { this.handle(JSON.parse(e.data)); } catch (err) { console.warn(err); } };
-    this.ws.onclose = () => { if (!this.ended) this.finish(this.connected ? 'dropped' : 'failed'); };
+    this.ws.onclose = () => { if (!this.ended) this.disconnected(); };
     this.ws.onerror = () => {};
     this.loop();
   }
@@ -76,7 +85,7 @@ export class VoiceCall {
     this.rate = rate;
     this.worklet = new AudioWorkletNode(this.ctx, 'pcm-capture', { processorOptions: { targetRate: rate } });
     this.worklet.port.onmessage = (e) => {
-      if (this.muted || !this.ws || this.ws.readyState !== 1) return;
+      if (this.muted || this.reconnecting || !this.ws || this.ws.readyState !== 1) return;
       this.ws.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: toBase64(e.data) }));
     };
     const sink = this.ctx.createGain();
@@ -85,7 +94,14 @@ export class VoiceCall {
   }
 
   handle(ev) {
+    if (this.ended) return;
     const t = ev.type;
+    if (t === 'coach.status') {
+      if (ev.phase === 'warming') this.state('connecting', 'Голосовой сервер запускается. Это может занять около минуты…');
+      if (ev.phase === 'reconnecting') { this.reconnecting = true; this.state('connecting', 'Восстанавливаем связь. Подождите с ответом…'); }
+      if (ev.phase === 'resumed') { this.reconnecting = false; this.state('listening', 'Связь восстановлена. Можно говорить.'); }
+      return;
+    }
     if (t === 'coach.ready') {
       this.resolved = ev.resolved || null;
       this.outRate = ev.rate || 16000;
@@ -96,7 +112,7 @@ export class VoiceCall {
     }
     if (t === 'coach.error') { this.fatal(ev.error?.message || 'Ошибка соединения'); return; }
     if (t === 'coach.timeout') { this.on.onWarn?.('Время звонка вышло.'); this.finish('timeout'); return; }
-    if (t === 'coach.upstream_closed') { if (!this.ended) this.finish(this.connected ? 'dropped' : 'failed'); return; }
+    if (t === 'coach.upstream_closed') { this.disconnected(); return; }
 
     if (t === 'session.created' || t === 'session.updated') {
       const outR = ev.session?.audio?.output?.format?.rate;
@@ -178,7 +194,10 @@ export class VoiceCall {
     src.start(this.playHead);
     this.playHead += buf.duration;
     this.sources.add(src);
-    src.onended = () => this.sources.delete(src);
+    src.onended = () => {
+      this.sources.delete(src);
+      if (!this.sources.size && !this.ended && !this.endRequested && !this.reconnecting) this.state('listening', 'Говорите — клиент слушает');
+    };
     this.state('speaking', 'Клиент говорит');
   }
 
@@ -279,11 +298,16 @@ export class VoiceCall {
 
   hangup() { this.finish('manager'); }
 
+  disconnected(message = 'Связь с голосовым сервером прервалась.') {
+    if (this.endRequested && this.connected) { this.finishAfterPlayback(); return; }
+    this.finish(this.connected ? 'dropped' : 'failed', message);
+  }
+
   fatal(message) {
     if (this.ended) return;
     this.state('error', message);
     this.on.onWarn?.(message, 'error');
-    this.finish('failed', message);
+    this.disconnected(message);
   }
 
   finish(reason, message) {
