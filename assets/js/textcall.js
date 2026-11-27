@@ -2,22 +2,24 @@
 import { api } from './api.js';
 
 export class TextCall {
-  constructor({ scenario, level, sid, on = {} }) {
+  constructor({ scenario, level, sid, on = {}, previous = null }) {
     this.scenario = scenario;
     this.level = level;
     this.sid = sid;
     this.on = on; // onState, onLine, onEnd, onWarn, onTick
-    this.lines = [];
+    this.lines = previous?.transcript.map((l, i) => ({ ...l, key: l.role[0] + i, final: true })) || [];
     this.ended = false;
     this.busy = false;
-    this.resolved = null;
+    this.resolved = previous ? { id: previous.realScenario, level, gender: previous.gender } : null;
+    this.elapsed = previous?.durationSec || 0;
   }
 
   now() { return (performance.now() - this.t0) / 1000; }
 
   async start() {
-    this.t0 = performance.now();
+    this.t0 = performance.now() - this.elapsed * 1000;
     this.timer = setInterval(() => this.on.onTick?.(this.now()), 500);
+    if (this.lines.at(-1)?.role === 'client') { this.on.onState?.('listening', 'Ваша реплика'); return; }
     await this.ask();
   }
 

@@ -4,6 +4,7 @@ import { buildClientPrompt, resolveScenario, resolveGender, END_CALL_TOOL, scena
 import { PRIVATE } from '../_lib/private.js';
 import { addUsage } from '../_lib/usage.js';
 import { teamOf } from '../_lib/team.js';
+import { openGeminiBridge } from '../_lib/gemini-bridge.js';
 
 // GET /api/realtime?scenario=hh&level=medium&code=... (WebSocket)
 // Реле между браузером и голосовым сервисом (протокол OpenAI Realtime; его же поддерживает Yandex AI Studio).
@@ -48,18 +49,43 @@ export async function onRequest(context) {
     const gender = resolveGender(PRIVATE[resolved.id]);
     const instructions = buildClientPrompt({ id: resolved.id, level: resolved.level, mode: 'voice', gender });
 
+    const sid = url.searchParams.get('sid') || '';
+    const trace = /^[\w-]{8,64}$/.test(sid) ? sid : crypto.randomUUID();
+    const startup = new AbortController();
+    const cancelStart = () => startup.abort();
+    server.addEventListener('close', cancelStart);
+    const startupTimer = setTimeout(cancelStart, 80000);
     let upstreamResp;
     try {
-      upstreamResp = await fetch(cfg.realtime.url, { headers: { Upgrade: 'websocket', ...cfg.realtime.headers } });
+      const headers = { Upgrade: 'websocket', ...cfg.realtime.headers };
+      if (cfg.provider === 'gemini') {
+        headers['X-Coach-Session'] = trace;
+        upstreamResp = await openGeminiBridge(cfg.realtime.url, headers, startup.signal, (status) => {
+          console.info('coach.voice', { trace, event: 'bridge_wait', status });
+          toClient({ type: 'coach.status', phase: 'warming' });
+        });
+      } else {
+        upstreamResp = await fetch(cfg.realtime.url, { headers, signal: startup.signal });
+      }
     } catch (e) {
-      return fatal('upstream', 'Не удалось подключиться к голосовому сервису: ' + e.message);
+      console.warn('coach.voice', { trace, event: 'bridge_unavailable' });
+      return fatal('upstream', 'Голосовой сервер не успел подключиться. Попробуйте ещё раз или начните тренировку в режиме «Диалог».');
+    } finally {
+      clearTimeout(startupTimer);
+      server.removeEventListener('close', cancelStart);
     }
     const upstream = upstreamResp.webSocket;
     if (!upstream) {
+      if (cfg.provider === 'gemini') {
+        console.warn('coach.voice', { trace, event: 'bridge_rejected', status: upstreamResp.status });
+        await upstreamResp.body?.cancel();
+        return fatal('upstream', 'Голосовой сервер временно недоступен (HTTP ' + upstreamResp.status + '). Попробуйте позже или выберите «Диалог».');
+      }
       const text = await upstreamResp.text().catch(() => '');
       return fatal('upstream', `Голосовой сервис ответил ${upstreamResp.status}. ${text.slice(0, 300)}`);
     }
     upstream.accept();
+    if (startup.signal.aborted || server.readyState !== 1) { upstream.close(1000, 'client left'); return; }
 
     let closed = false;
     let greeted = false;
@@ -69,7 +95,6 @@ export async function onRequest(context) {
     // Учёт расхода: байты звука в обе стороны и токены модели из response.done.
     const started = Date.now();
     const use = { inBytes: 0, outBytes: 0, rtIn: 0, rtCached: 0, rtOut: 0 };
-    const sid = url.searchParams.get('sid') || '';
     const manager = (url.searchParams.get('manager') || '').slice(0, 80);
     const meta = { manager, team: url.searchParams.get('team') || teamOf(manager), scenario: reqId, realScenario: resolved.id, level: resolved.level, mode: 'voice' };
     const bytesPerSec = 2 * cfg.realtime.rate;
@@ -95,7 +120,8 @@ export async function onRequest(context) {
       try { upstream.send(JSON.stringify({ type: 'response.create' })); } catch {}
     };
     limitTimer = setTimeout(() => { toClient({ type: 'coach.timeout' }); closeAll(1000, 'time limit'); }, cfg.maxCall * 1000);
-    greetTimer = setTimeout(greet, 3000); // если сервис не прислал session.updated
+    // У Gemini подтверждение приходит только после настройки сессии на Render.
+    if (cfg.provider !== 'gemini') greetTimer = setTimeout(greet, 3000); // если сервис не прислал session.updated
 
     upstream.send(JSON.stringify({
       type: 'session.update',
@@ -169,6 +195,7 @@ export async function onRequest(context) {
     server.addEventListener('close', () => closeAll());
     server.addEventListener('error', () => closeAll());
     upstream.addEventListener('close', (e) => {
+      if (!closed) console.info('coach.voice', { trace, event: 'bridge_closed', code: e.code });
       if (!closed) toClient({ type: 'coach.upstream_closed', code: e.code, reason: e.reason || '' });
       closeAll();
     });

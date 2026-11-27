@@ -25,6 +25,7 @@ const state = {
   speech: null,
   adminData: null,
   team: 'all',
+  voiceIssue: null,
 };
 
 const LEVEL_NAME = { easy: 'Лёгкий', medium: 'Средний', hard: 'Трудный', auto: 'Случайная сложность' };
@@ -311,6 +312,8 @@ function briefView(id) {
       </div>
       <div class="tips">${tips.map(([ic, t]) => `<div>${icon(ic, 20)}<span>${esc(t)}</span></div>`).join('')}</div>
       <button type="button" class="btn btn-primary btn-lg" id="startCall" ${canStart ? '' : 'disabled'}>${startLabel}</button>
+      ${mode === 'voice' && state.voiceIssue?.id === id ? `<div class="note" role="status"><div><p>${esc(state.voiceIssue.message)}</p>
+        ${state.cfg.textReady ? '<button class="btn btn-outline btn-sm" type="button" data-start-text>Начать текстовый диалог</button>' : ''}</div></div>` : ''}
       ${dict || ((mode === 'text' || freeVoice()) && state.cfg.textReady) ? '' : configNote()}
       ${(mode === 'text' || (mode === 'voice' && freeVoice())) && state.cfg.textProvider === 'cloudflare' ? `<p class="hint">Клиента играет бесплатная открытая модель. Дневной лимит общий на всех, обновляется в 03:00 по Москве.</p>` : ''}
     </aside>
@@ -329,6 +332,7 @@ function bindBrief() {
     });
   });
   $('#micTest')?.addEventListener('click', micTest);
+  $('[data-start-text]')?.addEventListener('click', () => startCall(id, 'text'));
   $('#startCall')?.addEventListener('click', () => (store.prefs().mode === 'voice' || store.prefs().mode === 'text' ? startCall(id) : startDictation(id)));
 }
 
@@ -400,22 +404,24 @@ async function startDictation(id) {
 // Голос без оплаты: голос браузера + открытая модель. VOICE_ENGINE=realtime — живой голос Yandex.
 function freeVoice() { return state.cfg.voiceEngine !== 'realtime'; }
 
-async function startCall(id) {
-  const textMode = store.prefs().mode === 'text';
+async function startCall(id, requestedMode = store.prefs().mode, previous = null) {
+  if (state.session && !state.session.ended) return;
+  const textMode = requestedMode === 'text';
   const lite = !textMode && freeVoice();
   const ok = textMode || lite ? (state.cfg.textReady ?? state.cfg.ready) : state.cfg.ready;
   if (!ok) { toast(textMode || lite ? 'ИИ для диалога не подключён' : 'Голос ещё не подключён', 'error'); return; }
   if (lite && !canBrowserVoice) { toast('Голосовой режим работает в Chrome и Edge. Откройте сайт в одном из них.', 'error'); return; }
   if (state.cfg.accessCode && !state.cfg.codeOk && !(await askCode())) return;
   stopMicTest();
+  state.voiceIssue = null;
   const prefs = store.prefs();
   const s = findScenario(id);
-  let level = prefs.level;
+  let level = previous?.level || prefs.level;
   if (id === 'random') level = ['auto', 'easy', 'medium', 'hard'].includes(level) ? level : 'auto';
   else if (!['easy', 'medium', 'hard'].includes(level)) level = 'medium';
-  const mode = prefs.mode === 'text' ? 'text' : 'voice';
-  const sid = newSid();
-  state.meta = { scenario: id, level, mode, sid, startedAt: new Date().toISOString(), title: s.title, engine: lite ? 'browser' : mode === 'voice' ? 'realtime' : '' };
+  const mode = textMode ? 'text' : 'voice';
+  const sid = previous?.sid || newSid();
+  state.meta = { scenario: id, level, mode, sid, startedAt: previous?.date || new Date().toISOString(), title: s.title, engine: lite ? 'browser' : mode === 'voice' ? 'realtime' : '', previous };
   state.subs = mode === 'text' ? true : Boolean(prefs.subs);
   const handlers = {
     onState: (kind, text) => { const el = $('#status'); if (el) { el.textContent = text; el.classList.toggle('err', kind === 'error'); } },
@@ -427,14 +433,17 @@ async function startCall(id) {
     onHeard: (text) => { const el = $('#heard'); if (el) { el.textContent = text ? '«' + text + '»' : ''; } },
   };
   const Engine = mode === 'text' ? TextCall : lite ? BrowserVoiceCall : VoiceCall;
-  const session = new Engine({ scenario: id, level, sid, on: handlers });
+  const session = new Engine({ scenario: id, level, sid, on: handlers, previous });
   state.session = session;
   const start = session.start(); // звук включаем сразу в обработчике клика
   location.hash = '#/call';
   try {
     await start;
   } catch (e) {
+    if (state.session !== session) return;
+    session.cleanup?.();
     state.session = null;
+    if (mode === 'voice') state.voiceIssue = { id, message: e.message };
     toast(e.message, 'error');
     location.hash = '#/s/' + id;
   }
@@ -556,22 +565,27 @@ function endCall(result) {
   const meta = state.meta;
   state.session = null;
   if (!result.connected || !result.transcript.length) {
+    if (meta.mode === 'voice' && ['dropped', 'failed'].includes(result.reason)) {
+      state.voiceIssue = { id: meta.scenario, message: result.message || 'Клиент не успел ответить. Попробуйте снова или выберите «Диалог».' };
+    }
     toast(result.message || 'Звонок не состоялся. Попробуйте ещё раз.', 'error');
     if (location.hash === '#/call' || location.hash === '#/d') location.hash = '#/s/' + meta.scenario;
     return;
   }
   const entry = {
-    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    id: meta.previous?.id || Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
     sid: meta.sid,
     scenario: meta.scenario,
     realScenario: result.resolved?.id || meta.scenario,
     level: result.resolved?.level || meta.level,
-    mode: meta.mode,
+    mode: meta.previous?.mode || meta.mode,
     date: meta.startedAt,
     durationSec: result.durationSec,
     transcript: result.transcript,
     outcome: result.outcome,
     endReason: result.reason,
+    interrupted: meta.mode === 'voice' && ['dropped', 'failed'].includes(result.reason),
+    gender: result.resolved?.gender,
     name: store.name(),
     metrics: metrics(result.transcript, result.durationSec),
     answers: result.answers || null,
@@ -579,7 +593,7 @@ function endCall(result) {
   };
   store.save(entry);
   location.hash = '#/r/' + entry.id;
-  evaluate(entry.id);
+  if (!entry.interrupted) evaluate(entry.id);
 }
 
 async function evaluate(id) {
@@ -641,7 +655,8 @@ function resultView(id) {
   const m = e.metrics || metrics(e.transcript, e.durationSec);
   const dict = e.mode === 'dictation';
   const head = `<a class="back" href="#/">${icon('back', 20)} Все тренажёры</a>`;
-  const tags = `<span class="tag">${esc(s.title)}</span>${e.scenario === 'random' && real ? `<span class="tag tag-mint">Это был: ${esc(real.title)}</span>` : ''}<span class="tag">${esc(dict ? 'Фразы' : LEVEL_NAME[e.level] || '')}${e.mode === 'text' ? ' · диалог' : ''}</span><span class="tag">${icon('clock', 16)} ${fmtTime(e.durationSec)}</span>`;
+  const ending = e.mode === 'voice' && (e.endReason === 'client' ? 'Клиент завершил звонок' : e.endReason === 'timeout' ? 'Время звонка истекло' : '');
+  const tags = `<span class="tag">${esc(s.title)}</span>${e.scenario === 'random' && real ? `<span class="tag tag-mint">Это был: ${esc(real.title)}</span>` : ''}<span class="tag">${esc(dict ? 'Фразы' : LEVEL_NAME[e.level] || '')}${e.mode === 'text' ? ' · диалог' : ''}</span><span class="tag">${icon('clock', 16)} ${fmtTime(e.durationSec)}</span>${ending ? `<span class="tag">${ending}</span>` : ''}`;
   const metricsHtml = dict ? dictMetrics(e) : `
     <section class="section"><div class="metrics">
       <div class="metric"><b class="ext">${fmtTime(m.duration)}</b><span>длительность</span></div>
@@ -657,6 +672,12 @@ function resultView(id) {
       <a class="btn btn-outline btn-lg" href="#/">Другой тренажёр</a>
     </div>`;
 
+  if (e.interrupted) {
+    const resume = state.cfg.textReady && e.name === store.name()
+      ? '<button class="btn btn-primary btn-lg" data-resume>Продолжить в диалоге</button>' : '';
+    return `${head}<section class="section box"><div class="tags">${tags}</div><h1>Голосовая связь прервалась</h1>
+      <p>Расшифровка сохранена. Оценка появится после завершения тренировки.</p>${resume}</section>${transcriptHtml}${actions}`;
+  }
   if (busy) {
     return `${head}
       <div class="loader"><h1 class="ext" style="font-size:34px">Тренер разбирает ${dict ? 'ответы' : 'звонок'}</h1><p class="muted" style="margin-top:8px">Обычно это 15–30 секунд.</p><div class="dots"><i></i><i></i><i></i></div></div>
@@ -735,12 +756,13 @@ function bindResult() {
   const id = location.hash.split('/')[2];
   const e = store.get(id);
   $('[data-retry]')?.addEventListener('click', () => evaluate(id));
+  $('[data-resume]')?.addEventListener('click', () => { if (e?.interrupted && e.name === store.name()) startCall(e.scenario, 'text', e); });
   $('[data-again]')?.addEventListener('click', () => { if (e) location.hash = '#/s/' + e.scenario; });
 }
 
 // ---------- мои результаты ----------
 function historyView() {
-  const all = store.history().filter((x) => x.eval || x.mode === 'dictation');
+  const all = store.history().filter((x) => x.eval || x.interrupted || x.mode === 'dictation');
   const scored = all.filter((x) => x.eval);
   if (!all.length) {
     return `<div class="empty"><h2>Пока нет тренировок</h2><p class="muted">Пройдите любой тренажёр — результат появится здесь.</p><br><a class="btn btn-primary btn-lg" href="#/">${icon('phone', 20)} К тренажёрам</a></div>`;
