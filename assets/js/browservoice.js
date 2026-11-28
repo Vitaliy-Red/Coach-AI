@@ -37,16 +37,17 @@ function speakable(text) {
 }
 
 export class BrowserVoiceCall {
-  constructor({ scenario, level, sid, on = {} }) {
+  constructor({ scenario, level, sid, on = {}, previous = null }) {
     this.scenario = scenario;
     this.level = level;
     this.sid = sid;
     this.on = on; // onState, onLine, onLevels, onTick, onWarn, onEnd, onHeard
-    this.lines = [];
+    this.lines = previous?.transcript.map((l, i) => ({ ...l, key: l.role[0] + i, final: true })) || [];
     this.ended = false;
     this.busy = false;
     this.muted = false;
-    this.resolved = null;
+    this.resolved = previous ? { id: previous.realScenario, level, gender: previous.gender } : null;
+    this.elapsed = previous?.durationSec || 0;
     this.mode = 'idle'; // idle | thinking | speaking | listening
     this.heard = '';
     this.voice = null;
@@ -56,21 +57,27 @@ export class BrowserVoiceCall {
 
   async start() {
     if (!canBrowserVoice) throw new Error('Голосовой режим работает в Chrome и Edge. Откройте сайт в одном из них.');
-    this.t0 = performance.now();
+    this.t0 = performance.now() - this.elapsed * 1000;
     // Микрофон для индикатора громкости (и чтобы браузер спросил разрешение сразу).
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      if (this.ended) { this.stream.getTracks().forEach((track) => track.stop()); return; }
       this.ctx = new (window.AudioContext || window.webkitAudioContext)();
       this.an = this.ctx.createAnalyser();
       this.an.fftSize = 512;
       this.ctx.createMediaStreamSource(this.stream).connect(this.an);
       this.buf = new Float32Array(512);
     } catch {
+      this.stream?.getTracks().forEach((track) => track.stop());
+      this.ctx?.close().catch(() => {});
+      if (this.ended) return;
       throw new Error('Нет доступа к микрофону. Разрешите его в адресной строке браузера.');
     }
     this.ru = await russianVoices();
+    if (this.ended) return;
     if (!this.ru.length) this.on.onWarn?.('В браузере нет русского голоса: реплики клиента будут только на экране. Лучше всего звучит Edge.', 'error');
     this.timer = setInterval(() => this.tick(), 80);
+    if (this.lines.at(-1)?.role === 'client') { this.listen(); return; }
     await this.ask();
   }
 
@@ -191,8 +198,10 @@ export class BrowserVoiceCall {
       if (this.heard) this.pause = setTimeout(() => this.flush(), PAUSE_MS);
     };
     rec.onerror = (e) => {
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { this.on.onWarn?.('Браузер не дал доступ к распознаванию речи.', 'error'); this.rec = null; }
-      if (e.error === 'network') { this.on.onWarn?.('Распознавание речи сейчас недоступно. Проверьте интернет.', 'error'); }
+      if (this.rec === rec && ['not-allowed', 'service-not-allowed', 'network'].includes(e.error)) {
+        this.closeRec();
+        this.state('listening', 'Распознавание речи недоступно. Введите ответ ниже.');
+      }
     };
     rec.onend = () => {
       if (this.rec !== rec) return;

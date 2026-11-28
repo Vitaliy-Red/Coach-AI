@@ -79,7 +79,7 @@ export async function onRequest(context) {
       if (cfg.provider === 'gemini') {
         console.warn('coach.voice', { trace, event: 'bridge_rejected', status: upstreamResp.status });
         await upstreamResp.body?.cancel();
-        return fatal('upstream', 'Голосовой сервер временно недоступен (HTTP ' + upstreamResp.status + '). Попробуйте позже или выберите «Диалог».');
+        return fatal('upstream', 'Голосовой сервер временно недоступен (HTTP ' + upstreamResp.status + '). Можно продолжить тренировку в резервном режиме.');
       }
       const text = await upstreamResp.text().catch(() => '');
       return fatal('upstream', `Голосовой сервис ответил ${upstreamResp.status}. ${text.slice(0, 300)}`);

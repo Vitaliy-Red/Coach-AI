@@ -2,26 +2,37 @@
 // Retry only before a socket exists, so a call or its greeting cannot be duplicated.
 export async function openGeminiBridge(url, headers, signal, onWait, fetcher = fetch, sleep = delay) {
   const upgrade = () => fetcher(url, { headers, signal });
-  let response = await upgrade().catch((e) => {
+  const response = await upgrade().catch((e) => {
     if (signal.aborted) throw e;
     return new Response(null, { status: 503 });
   });
   if (response.webSocket || ![429, 502, 503, 504].includes(response.status)) return response;
-  const retry = response.headers.get('Retry-After');
-  const seconds = retry === null ? 3 : /^\d+$/.test(retry) ? Number(retry) : (Date.parse(retry) - Date.now()) / 1000;
+  const seconds = retrySeconds(response, 3);
   if (seconds > 65) return response;
   onWait(response.status);
   await response.body?.cancel();
-  await sleep(Math.max(1, Number.isFinite(seconds) ? seconds : 3) * 1000, signal);
-  const health = await fetcher(new URL('health', url), { headers: { Accept: 'application/json' }, signal });
+  await sleep(seconds * 1000, signal);
+  const health = await fetcher(new URL('health', url), { headers: { Accept: 'application/json' }, signal }).catch((error) => {
+    if (signal.aborted) throw error;
+    return new Response(null, { status: 503 });
+  });
   const ready = health.ok && health.headers.get('Content-Type')?.includes('application/json')
     ? await health.json().catch(() => null) : null;
   if (!health.bodyUsed) await health.body?.cancel();
-  if (health.status === 429) return new Response(null, { status: 429, headers: health.headers });
   if (ready?.ready === false) return new Response(null, { status: 503 });
-  if (!ready?.ready) await sleep(5000, signal);
-  response = await upgrade();
-  return response;
+  if (!ready?.ready) {
+    const wait = retrySeconds(health, 25);
+    if (wait > 65) return new Response(null, { status: health.ok ? 503 : health.status, headers: health.headers });
+    await sleep(wait * 1000, signal);
+  }
+  return upgrade();
+}
+
+function retrySeconds(response, fallback) {
+  const retry = response.headers.get('Retry-After');
+  if (!retry) return fallback;
+  const seconds = /^\d+$/.test(retry) ? Number(retry) : (Date.parse(retry) - Date.now()) / 1000;
+  return Math.max(1, Number.isFinite(seconds) ? seconds : fallback);
 }
 
 function delay(ms, signal) {

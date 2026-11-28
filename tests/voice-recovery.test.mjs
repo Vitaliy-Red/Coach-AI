@@ -27,6 +27,23 @@ test('healthy, permanent, and long rate-limit responses each make one request', 
   }
 });
 
+test('a cold health endpoint returning 429 still allows one upgrade after Retry-After', async () => {
+  const waits = [], socket = { webSocket: {} };
+  const responses = [new Response(null, {status:429}), new Response(null, {status:429, headers:{'Retry-After':'35'}}), socket];
+  const result = await openGeminiBridge('https://bridge.example/api/coach-realtime', {}, new AbortController().signal,
+    () => {}, async () => responses.shift(), async ms => { waits.push(ms); });
+  assert.equal(result, socket);
+  assert.deepEqual(waits, [3000, 35000]);
+  assert.equal(responses.length, 0);
+});
+
+test('a long Retry-After on the health endpoint postpones the next call', async () => {
+  const responses = [new Response(null,{status:503}), new Response(null,{status:429,headers:{'Retry-After':'90'}})];
+  const result = await openGeminiBridge('https://bridge.example/api/coach-realtime', {}, new AbortController().signal,
+    () => {}, async () => responses.shift(), async () => {});
+  assert.equal(result.status,429);assert.equal(result.headers.get('Retry-After'),'90');assert.equal(responses.length,0);
+});
+
 test('an interruption preserves the transcript and a normal client goodbye stays a goodbye', () => {
   const results = [];
   const call = new VoiceCall({ scenario:'hh', on:{onEnd:r=>results.push(r)} });
