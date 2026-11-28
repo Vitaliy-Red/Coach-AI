@@ -49,7 +49,7 @@ export class Dictation {
       <div class="dict-q">
         <span class="dict-who">${icon('user', 22)} ${this.i === 0 ? 'Клиент снял трубку' : 'Клиент'}</span>
         <p class="dict-quote">«${esc(q.text)}»</p>
-        <span class="hint">${this.i === 0 ? 'Начните разговор так, как начинаете звонок.' : 'Реальная фраза клиента из расшифровки звонка.'}</span>
+        <span class="hint">${this.i === 0 ? 'Начните разговор так, как начинаете звонок.' : 'Ответьте на учебную реплику клиента.'}</span>
       </div>
       <div class="dict-a">
         <label for="ans">Ваш ответ</label>
@@ -61,6 +61,7 @@ export class Dictation {
           <button type="button" class="btn btn-ghost" id="skipBtn">Пропустить</button>
           <button type="button" class="btn btn-primary btn-lg" id="nextBtn">${last ? 'Завершить' : 'Ответить'} ${icon('arrow', 20)}</button>
         </div>
+        <p id="answerSaveStatus" class="hint" role="status"></p>
         ${canDictate ? '' : `<div class="note" style="margin-top:14px">${icon('info')}<p>В этом браузере нет распознавания речи. Откройте сайт в Chrome или Edge либо включите диктовку системы: Windows — <b>Win + H</b>, Mac — дважды <b>Fn</b>.</p></div>`}
       </div>
       <p class="tipline">Отвечайте так, как сказали бы клиенту по телефону. Текст можно поправить перед отправкой.<span class="kbd-hint"> Ctrl + Enter — ответить.</span></p>
@@ -98,20 +99,37 @@ export class Dictation {
     if (st) st.textContent = this.micLabel();
   }
 
-  next(skip) {
-    if (this.done) return;
+  async next(skip) {
+    if (this.done || this.saving) return;
     this.speech.stop(true);
-    const answer = skip ? '' : String($('#ans')?.value || '').trim();
+    const field = $('#ans');
+    const answer = skip ? '' : String(field?.value || '').trim();
     if (!skip && !answer) { toast('Скажите или напишите ответ. Или нажмите «Пропустить».', 'error'); return; }
     const q = this.questions[this.i];
     const seconds = Math.round((performance.now() - this.qStart) / 1000);
     const voice = this.speech.used;
     const source = skip ? 'skip' : voice && this.typed ? 'mixed' : voice ? 'voice' : 'typed';
     const item = { step: this.i, key: q.key, question: q.text, answer, seconds, source, t: Math.round(this.now() * 10) / 10 };
+    const buttons = ['#nextBtn', '#skipBtn', '#micBtn'].map((id) => $(id));
+    const status = $('#answerSaveStatus');
+    this.saving = true;
+    field.readOnly = true;
+    for (const button of buttons) button.disabled = true;
+    status.textContent = 'Сохраняем…';
+    try {
+      const saved = await api.saveAnswer({ sid: this.sid, scenario: this.scenario, trainer: this.trainer, step: item.step, key: item.key, answer, seconds, source });
+      if (saved?.saved !== true) throw new Error('Сервер не подтвердил сохранение.');
+    } catch (error) {
+      if (!this.done) {
+        status.textContent = `${error.message} Текст ответа остался в поле.`;
+        field.readOnly = false;
+        for (const button of buttons) button.disabled = false;
+        field.focus();
+      }
+      return;
+    } finally { this.saving = false; }
+    if (this.done) return;
     this.answers.push(item);
-    // Запись в базу — в фоне: при ошибке ответ всё равно останется в разборе на этом компьютере.
-    api.saveAnswer({ sid: this.sid, scenario: this.scenario, trainer: this.trainer, step: item.step, key: item.key, answer, seconds, source, totalSec: Math.round(this.now()) })
-      .catch((e) => toast('Ответ не сохранился на сервере: ' + e.message, 'error'));
     this.i += 1;
     this.speech.reset();
     this.typed = false;

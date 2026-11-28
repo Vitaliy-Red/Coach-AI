@@ -1,15 +1,18 @@
 import { providerConfig } from '../_lib/provider.js';
 import { json, fail, checkAccess, readJson, chatCompletion, extractJson } from '../_lib/http.js';
-import { buildEvalPrompt, scenarioExists, MAIN_ERRORS, CATALOG } from '../_lib/prompt.js';
-import { addUsage, saveResult, usageFrom } from '../_lib/usage.js';
+import { buildEvalPrompt, scenarioExists, MAIN_ERRORS } from '../_lib/prompt.js';
+import { saveResult } from '../_lib/training-data.js';
+import { currentStaff, staffAuthEnabled, staffDenied } from '../_lib/staff-auth.js';
 
 const KEYS = ['accept', 'handle', 'alternative', 'nextStep'];
 const OUTCOMES = ['оплата', 'тест', 'перезвон с датой', 'КП на почту', 'отказ', 'вопрос решён', 'без итога'];
 
 // POST /api/evaluate — разбор звонка по 4 критериям.
 // body: { scenario, level, durationSec, transcript: [{ role: 'manager'|'client', text, t }] }
-export async function onRequestPost({ request, env, waitUntil }) {
+export async function onRequestPost({ request, env }) {
   if (!checkAccess(request, env)) return fail(401, 'access', 'Неверный код команды');
+  const staff = await currentStaff(request, env);
+  if (!staff && staffAuthEnabled(env)) return staffDenied();
   const cfg = providerConfig(env);
   if (!cfg.text) return fail(503, 'config', 'Разбор не подключён: ' + (cfg.missing || []).join(', '));
 
@@ -24,11 +27,10 @@ export async function onRequestPost({ request, env, waitUntil }) {
     .map((t) => ({ role: t.role, text: String(t.text).slice(0, 3000), t: Number(t.t) || 0 }));
 
   const managerWords = transcript.filter((t) => t.role === 'manager').reduce((s, t) => s + t.text.split(/\s+/).length, 0);
-  const meta = { manager: body.manager, team: body.team, scenario: body.trainer || id, realScenario: id, level, mode: body.mode };
-  const keep = (p) => { if (waitUntil) waitUntil(p); };
+  const meta = { manager: staff ? staff.name : body.manager, team: staff ? staff.team : body.team, scenario: body.trainer || id, realScenario: id, level, mode: body.mode };
   if (managerWords < 12) {
     const r = shortCall();
-    keep(addUsage(env, body.sid, meta, { durationSec: body.durationSec }).then(() => saveResult(env, body.sid, r)));
+    await saveResult(env, body.sid, meta, r, body.durationSec);
     return json(r);
   }
 
@@ -40,14 +42,9 @@ export async function onRequestPost({ request, env, waitUntil }) {
 
   let parsed = null;
   let lastErr = '';
-  const used = { llmIn: 0, llmOut: 0, cfNeurons: 0 };
   for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
     try {
       const out = await chatCompletion(cfg.text, { model: cfg.text.evalModel, messages, temperature: 0.2, maxTokens: 1500, json: true });
-      const u = usageFrom(out.usage);
-      used.llmIn += u.llmIn;
-      used.llmOut += u.llmOut;
-      used.cfNeurons += u.cfNeurons;
       parsed = extractJson(out.text);
       if (!parsed) lastErr = 'ответ не в формате JSON';
     } catch (e) {
@@ -56,17 +53,15 @@ export async function onRequestPost({ request, env, waitUntil }) {
     }
   }
   if (!parsed) {
-    keep(addUsage(env, body.sid, meta, { ...used, durationSec: body.durationSec }));
     return fail(502, 'llm', 'Не удалось получить разбор: ' + lastErr);
   }
 
-  const type = CATALOG.find((s) => s.id === id)?.type;
-  const result = normalize(parsed, type);
-  keep(addUsage(env, body.sid, meta, { ...used, durationSec: body.durationSec }).then(() => saveResult(env, body.sid, result)));
+  const result = normalize(parsed, id, body.mode);
+  await saveResult(env, body.sid, meta, result, body.durationSec);
   return json(result);
 }
 
-function normalize(p, type) {
+function normalize(p, id, mode) {
   const criteria = {};
   for (const k of KEYS) {
     const c = (p.criteria && p.criteria[k]) || {};
@@ -76,13 +71,15 @@ function normalize(p, type) {
       quote: clean(c.quote, 400),
     };
   }
-  if (type === 'soft') {
-    for (const k of ['accept', 'handle', 'alternative']) {
-      criteria[k] = { score: 1, comment: 'Засчитано: у клиента не было жалобы.', quote: criteria[k].quote };
+  const missedDiscovery = id !== 'find-recruiter' && mode !== 'dictation' && !criteria.handle.score;
+  if (missedDiscovery) {
+    for (const k of ['alternative', 'nextStep']) {
+      criteria[k] = { score: 0, comment: 'Сначала выясните задачу и ограничение клиента.', quote: '' };
     }
   }
   const score = KEYS.reduce((s, k) => s + criteria[k].score, 0);
   let mainError = MAIN_ERRORS.includes(p.mainError) ? p.mainError : guessError(criteria);
+  if (missedDiscovery) mainError = 'не выявил потребность';
   if (score === 4) mainError = 'нет';
   if (score < 4 && mainError === 'нет') mainError = guessError(criteria);
   return {
@@ -100,10 +97,10 @@ function normalize(p, type) {
 }
 
 function guessError(c) {
-  if (!c.handle.score) return 'ушёл от возражения';
+  if (!c.accept.score) return 'не установил контакт';
+  if (!c.handle.score) return 'не выявил потребность';
   if (!c.nextStep.score) return 'нет следующего шага';
   if (!c.alternative.score) return 'нет доказательств';
-  if (!c.accept.score) return 'давил или спорил';
   return 'нет';
 }
 

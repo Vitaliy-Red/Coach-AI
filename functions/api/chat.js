@@ -2,14 +2,15 @@ import { providerConfig } from '../_lib/provider.js';
 import { json, fail, checkAccess, readJson, chatCompletion } from '../_lib/http.js';
 import { buildClientPrompt, resolveScenario, resolveGender, scenarioExists } from '../_lib/prompt.js';
 import { PRIVATE } from '../_lib/private.js';
-import { addUsage, usageFrom } from '../_lib/usage.js';
+import { currentStaff, staffAuthEnabled, staffDenied } from '../_lib/staff-auth.js';
 
 const END_MARK = /\[\s*конец\s+звонка\s*\]/i;
 
 // POST /api/chat — текстовый режим: следующая реплика клиента.
 // body: { scenario, level, gender?, messages: [{ role: 'manager'|'client', text }] }
-export async function onRequestPost({ request, env, waitUntil }) {
+export async function onRequestPost({ request, env }) {
   if (!checkAccess(request, env)) return fail(401, 'access', 'Неверный код команды');
+  if (staffAuthEnabled(env) && !await currentStaff(request, env)) return staffDenied();
   const cfg = providerConfig(env);
   if (!cfg.text) return fail(503, 'config', 'Тренажёр не подключён: ' + (cfg.missing || []).join(', '));
 
@@ -41,10 +42,6 @@ export async function onRequestPost({ request, env, waitUntil }) {
   try {
     const out = await chatCompletion(cfg.text, { messages, temperature: 0.8, maxTokens: 300 });
     let reply = out.text;
-    const usageWrite = addUsage(env, body.sid,
-      { manager: body.manager, team: body.team, scenario: reqId, realScenario: resolved.id, level: resolved.level, mode: body.mode === 'voice' ? 'voice' : 'text' },
-      { ...usageFrom(out.usage), durationSec: body.durationSec });
-    if (waitUntil) waitUntil(usageWrite);
     const ended = END_MARK.test(reply);
     reply = reply.replace(END_MARK, '').replace(/^["«]|["»]$/g, '').trim();
     return json({ reply: reply || 'Алло?', ended, resolved });

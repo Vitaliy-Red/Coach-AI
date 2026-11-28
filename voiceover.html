@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Озвучка обучающего ролика — Coach AI</title>
+<title>Озвучка обучающего ролика — Red Coach</title>
 <link rel="icon" href="/assets/img/favicon.svg" type="image/svg+xml">
 <style>
   :root { --green: #00AA6D; --green-dark: #00744A; --mint: #D1FFF1; --text: #3E3E3E; --line: #E3E7EB; --red: #D40E1E; --table: #4A4A4A; }
@@ -92,10 +92,10 @@ const SCRIPT = [
   { id: 's0', lines: [
     { show: '«Хедхантер продуктивнее, чем вы. Давайте объективно говорить».', say: 'Хедхантер продуктивнее, чем вы. Давайте объективно говорить.' },
     { show: 'Что ответите клиенту?' },
-    { show: 'Потренируйтесь до звонка — в Coach AI.', say: 'Потренируйтесь до звонка — в Коуч Эй Ай.' },
+    { show: 'Потренируйтесь до звонка — в Red Coach.', say: 'Потренируйтесь до звонка — в Ред Коуч.' },
   ] },
   { id: 's1', lines: [
-    { show: 'Coach AI — тренажёр звонков для менеджеров SuperJob.', say: 'Коуч Эй Ай — тренажёр звонков для менеджеров Суперджоб.' },
+    { show: 'Red Coach — тренажёр звонков для менеджеров по продажам.', say: 'Ред Коуч — тренажёр звонков для менеджеров по продажам.' },
     { show: 'Клиентов в нём играет искусственный интеллект, а собраны они из наших реальных звонков: настоящие возражения, настоящие фразы, настоящие цифры.' },
     { show: 'Задача простая — отработать возражение и договориться о следующем шаге.' },
   ] },
@@ -200,7 +200,7 @@ function say(text, rate) {
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-$('#testBtn').addEventListener('click', () => { TTS.cancel(); say('Здравствуйте! Это голос для обучающего ролика Коуч Эй Ай.', Number($('#rate').value)); });
+$('#testBtn').addEventListener('click', () => { TTS.cancel(); say('Здравствуйте! Это голос для обучающего ролика Ред Коуч.', Number($('#rate').value)); });
 
 function setStatus(t) { $('#status').textContent = t; }
 function warn(t) { const w = $('#recWarn'); w.hidden = !t; w.textContent = t || ''; }

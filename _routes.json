@@ -1,5 +1,5 @@
 {
   "version": 1,
-  "include": ["/api/*", "/functions/*", "/docs/*", "/README.md", "/readme.md"],
+  "include": ["/api/*", "/functions/*", "/docs/*", "/tests/*", "/README.md", "/readme.md"],
   "exclude": []
 }
