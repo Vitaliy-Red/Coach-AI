@@ -270,7 +270,7 @@ export class VoiceCall {
   // ---------- управление ----------
   setMuted(m) {
     this.muted = m; // пока выключено, звук микрофона просто не отправляем
-    if (this.rec) { try { m ? this.rec.stop() : this.rec.start(); } catch {} }
+    if (this.rec) { try { m ? this.rec.stop() : this.rec.start(this.stream.getAudioTracks()[0]); } catch {} }
   }
 
   // Запасная расшифровка речи менеджера силами браузера (Chrome, Edge, Яндекс Браузер).
@@ -280,6 +280,7 @@ export class VoiceCall {
     if (!SR) return;
     try {
       const rec = new SR();
+      const track = this.stream.getAudioTracks()[0];
       rec.lang = 'ru-RU';
       rec.continuous = true;
       rec.interimResults = false;
@@ -289,9 +290,9 @@ export class VoiceCall {
           if (r.isFinal && r[0]?.transcript?.trim()) this.sttLines.push({ role: 'manager', text: r[0].transcript.trim(), t: Math.round(this.now() * 10) / 10 });
         }
       };
-      rec.onerror = (e) => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') this.rec = null; };
-      rec.onend = () => { if (this.rec && !this.ended && !this.muted) { try { rec.start(); } catch {} } };
-      rec.start();
+      rec.onerror = (e) => { if (['not-allowed', 'service-not-allowed', 'network'].includes(e.error)) this.rec = null; };
+      rec.onend = () => { if (this.rec === rec && !this.ended && !this.muted) { try { rec.start(track); } catch {} } };
+      if (!this.muted) rec.start(track);
       this.rec = rec;
     } catch { this.rec = null; }
   }
