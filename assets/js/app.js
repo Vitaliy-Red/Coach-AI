@@ -313,11 +313,16 @@ function briefView(id) {
       <div class="tips">${tips.map(([ic, t]) => `<div>${icon(ic, 20)}<span>${esc(t)}</span></div>`).join('')}</div>
       <button type="button" class="btn btn-primary btn-lg" id="startCall" ${canStart ? '' : 'disabled'}>${startLabel}</button>
       ${mode === 'voice' && state.voiceIssue?.id === id ? `<div class="note" role="status"><div><p>${esc(state.voiceIssue.message)}</p>
-        ${state.cfg.textReady ? '<button class="btn btn-outline btn-sm" type="button" data-start-text>Начать текстовый диалог</button>' : ''}</div></div>` : ''}
+        ${state.cfg.textReady ? fallbackButtons(state.voiceIssue.browserFallback) : ''}</div></div>` : ''}
       ${dict || ((mode === 'text' || freeVoice()) && state.cfg.textReady) ? '' : configNote()}
       ${(mode === 'text' || (mode === 'voice' && freeVoice())) && state.cfg.textProvider === 'cloudflare' ? `<p class="hint">Клиента играет бесплатная открытая модель. Дневной лимит общий на всех, обновляется в 03:00 по Москве.</p>` : ''}
     </aside>
   </div>`;
+}
+
+function fallbackButtons(browser) {
+  return `<div class="actions-row">${browser && canBrowserVoice ? '<button type="button" class="btn btn-primary btn-sm" data-fallback="browser">Продолжить голосом браузера</button>' : ''}
+    <button type="button" class="btn btn-outline btn-sm" data-fallback="text">Продолжить в диалоге</button></div>`;
 }
 
 function bindBrief() {
@@ -332,7 +337,7 @@ function bindBrief() {
     });
   });
   $('#micTest')?.addEventListener('click', micTest);
-  $('[data-start-text]')?.addEventListener('click', () => startCall(id, 'text'));
+  $$('[data-fallback]').forEach((b) => b.addEventListener('click', () => startCall(id, b.dataset.fallback)));
   $('#startCall')?.addEventListener('click', () => (store.prefs().mode === 'voice' || store.prefs().mode === 'text' ? startCall(id) : startDictation(id)));
 }
 
@@ -407,7 +412,7 @@ function freeVoice() { return state.cfg.voiceEngine !== 'realtime'; }
 async function startCall(id, requestedMode = store.prefs().mode, previous = null) {
   if (state.session && !state.session.ended) return;
   const textMode = requestedMode === 'text';
-  const lite = !textMode && freeVoice();
+  const lite = !textMode && (requestedMode === 'browser' || freeVoice());
   const ok = textMode || lite ? (state.cfg.textReady ?? state.cfg.ready) : state.cfg.ready;
   if (!ok) { toast(textMode || lite ? 'ИИ для диалога не подключён' : 'Голос ещё не подключён', 'error'); return; }
   if (lite && !canBrowserVoice) { toast('Голосовой режим работает в Chrome и Edge. Откройте сайт в одном из них.', 'error'); return; }
@@ -422,7 +427,7 @@ async function startCall(id, requestedMode = store.prefs().mode, previous = null
   const mode = textMode ? 'text' : 'voice';
   const sid = previous?.sid || newSid();
   state.meta = { scenario: id, level, mode, sid, startedAt: previous?.date || new Date().toISOString(), title: s.title, engine: lite ? 'browser' : mode === 'voice' ? 'realtime' : '', previous };
-  state.subs = mode === 'text' ? true : Boolean(prefs.subs);
+  state.subs = textMode || requestedMode === 'browser' || Boolean(prefs.subs);
   const handlers = {
     onState: (kind, text) => { const el = $('#status'); if (el) { el.textContent = text; el.classList.toggle('err', kind === 'error'); } },
     onLine: (line, transcript) => renderSubs(transcript),
@@ -445,7 +450,7 @@ async function startCall(id, requestedMode = store.prefs().mode, previous = null
     state.session = null;
     if (mode === 'voice') state.voiceIssue = { id, message: e.message };
     toast(e.message, 'error');
-    location.hash = '#/s/' + id;
+    location.hash = previous ? '#/r/' + previous.id : '#/s/' + id;
   }
 }
 
@@ -464,7 +469,7 @@ function callView() {
       <div class="ring" id="ring1"></div><div class="ring r2" id="ring2"></div>
       <div class="avatar">${icon('user', text ? 32 : 44)}<b>${esc(s.short || 'Клиент')}</b></div>
     </div>
-    <p class="status" id="status" aria-live="polite">${text ? 'Соединяем…' : 'Подключаем микрофон…'}</p>
+    <p class="status" id="status" aria-live="polite">${text ? (m.previous?.transcript.at(-1)?.role === 'client' ? 'Ваша реплика' : 'Соединяем…') : 'Подключаем микрофон…'}</p>
     ${text ? '' : `<div class="you"><span>Вы</span><div class="meter" aria-hidden="true"><i id="youLevel"></i></div></div>`}
     ${m.engine === 'browser' ? '<p class="heard" id="heard" aria-live="polite"></p>' : ''}
     <div class="controls">
@@ -474,8 +479,8 @@ function callView() {
       ${text ? '' : `<div class="ctl"><button class="round ${state.subs ? 'on' : ''}" id="subsBtn" aria-pressed="${state.subs}" title="Показать текст разговора">${icon('captions', 28)}</button><span class="round-label">Текст</span></div>`}
     </div>
     <div class="subs" id="subs" ${state.subs ? '' : 'hidden'} aria-live="polite"></div>
-    ${text ? `<form class="composer" id="composer">
-      <button type="button" class="round mic" id="dictBtn" aria-pressed="false" title="Диктовать ответ">${icon('mic', 26)}</button>
+    ${text || m.engine === 'browser' ? `<form class="composer" id="composer">
+      ${text ? `<button type="button" class="round mic" id="dictBtn" aria-pressed="false" title="Диктовать ответ">${icon('mic', 26)}</button>` : ''}
       <textarea id="reply" placeholder="${canDictate ? 'Нажмите на микрофон и говорите или печатайте. Enter — отправить' : 'Ваша реплика… Enter — отправить'}" aria-label="Реплика менеджера"></textarea>
       <button class="btn btn-primary" type="submit" title="Отправить">${icon('send', 20)}</button></form>
       <p class="dict-state small" id="dictState" aria-live="polite"></p>` : ''}
@@ -508,7 +513,7 @@ function bindCall() {
   if (form) {
     const ta = $('#reply');
     const mic = $('#dictBtn');
-    const speech = new SpeechInput({
+    const speech = mic && new SpeechInput({
       field: () => $('#reply'),
       onState: (rec) => {
         mic.classList.toggle('rec', rec);
@@ -519,17 +524,17 @@ function bindCall() {
     });
     state.speech = speech;
     const send = () => {
-      if (s.busy) { toast('Клиент ещё отвечает — дождитесь его реплики', 'info'); return; }
-      speech.stop(true);
+      if (s.busy || (s instanceof BrowserVoiceCall && s.mode !== 'listening')) { toast('Дождитесь, пока клиент сможет принять ответ.', 'info'); return; }
+      speech?.stop(true);
       const v = ta.value;
       if (!v.trim()) return;
       ta.value = '';
-      speech.reset();
+      speech?.reset();
       s.send(v);
     };
-    mic.addEventListener('click', () => speech.toggle());
+    mic?.addEventListener('click', () => speech.toggle());
     form.addEventListener('submit', (e) => { e.preventDefault(); send(); });
-    ta.addEventListener('input', () => { if (speech.recording) speech.stop(true); });
+    ta.addEventListener('input', () => { if (speech?.recording) speech.stop(true); });
     ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
     if (!canDictate) setTimeout(() => ta.focus(), 50);
   }
@@ -566,7 +571,7 @@ function endCall(result) {
   state.session = null;
   if (!result.connected || !result.transcript.length) {
     if (meta.mode === 'voice' && ['dropped', 'failed'].includes(result.reason)) {
-      state.voiceIssue = { id: meta.scenario, message: result.message || 'Клиент не успел ответить. Попробуйте снова или выберите «Диалог».' };
+      state.voiceIssue = { id: meta.scenario, browserFallback: meta.engine === 'realtime', message: result.message || 'Клиент не успел ответить. Попробуйте снова или продолжите другим способом.' };
     }
     toast(result.message || 'Звонок не состоялся. Попробуйте ещё раз.', 'error');
     if (location.hash === '#/call' || location.hash === '#/d') location.hash = '#/s/' + meta.scenario;
@@ -674,7 +679,7 @@ function resultView(id) {
 
   if (e.interrupted) {
     const resume = state.cfg.textReady && e.name === store.name()
-      ? '<button class="btn btn-primary btn-lg" data-resume>Продолжить в диалоге</button>' : '';
+      ? fallbackButtons(true) : '';
     return `${head}<section class="section box"><div class="tags">${tags}</div><h1>Голосовая связь прервалась</h1>
       <p>Расшифровка сохранена. Оценка появится после завершения тренировки.</p>${resume}</section>${transcriptHtml}${actions}`;
   }
@@ -756,7 +761,9 @@ function bindResult() {
   const id = location.hash.split('/')[2];
   const e = store.get(id);
   $('[data-retry]')?.addEventListener('click', () => evaluate(id));
-  $('[data-resume]')?.addEventListener('click', () => { if (e?.interrupted && e.name === store.name()) startCall(e.scenario, 'text', e); });
+  $$('[data-fallback]').forEach((b) => b.addEventListener('click', () => {
+    if (e?.interrupted && e.name === store.name()) startCall(e.scenario, b.dataset.fallback, e);
+  }));
   $('[data-again]')?.addEventListener('click', () => { if (e) location.hash = '#/s/' + e.scenario; });
 }
 
