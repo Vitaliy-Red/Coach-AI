@@ -1,14 +1,15 @@
 // Coach AI — интерфейс: каталог → бриф → звонок → разбор → мои результаты.
-import { CATALOG, LEVELS, TYPES, CRITERIA, ERROR_HINTS, findScenario } from './catalog.js';
+import { CATALOG, LEVELS, TYPES, CRITERIA, ERROR_HINTS, criteriaFor, findScenario } from './catalog.js';
 import { api } from './api.js';
 import { store } from './store.js';
 import { VoiceCall } from './voice.js';
 import { TextCall } from './textcall.js';
-import { esc, $, $$, icon, LOGO, fmtTime, fmtDate, plural, toast, promptModal } from './ui.js';
+import { esc, $, $$, icon, fmtTime, fmtDate, plural, toast, promptModal } from './ui.js';
 import { leaderPage } from './leader.js';
 import { Dictation } from './dictation.js';
 import { SpeechInput, canDictate } from './speech.js';
 import { BrowserVoiceCall, canBrowserVoice } from './browservoice.js';
+import { newTrainingId } from './training-id.js';
 
 const app = $('#app');
 const state = {
@@ -19,11 +20,8 @@ const state = {
   subs: false,
   evaluating: new Set(),
   mic: null,
-  teams: null,
-  leaders: [],
   dict: null,
   speech: null,
-  adminData: null,
   team: 'all',
   voiceIssue: null,
 };
@@ -35,71 +33,45 @@ const MODE_NAME = { voice: 'Голос', text: 'Диалог', dictation: 'Фр�
 init();
 
 async function init() {
-  $('#logo').innerHTML = LOGO;
-  $('#who').addEventListener('click', () => pickProfile(false));
+  store.resetLegacyHistory();
+  $('#who').addEventListener('click', () => {
+    if (state.dict || (state.session && !state.session.ended)) {
+      toast('Завершите тренировку перед сменой сотрудника.');
+      return;
+    }
+    pickProfile(false);
+  });
   window.addEventListener('hashchange', route);
-  renderWho();
-  route();
   state.cfg = await api.config();
+  if (state.cfg.staffLogin) {
+    const profile = state.cfg.profile;
+    store.setProfile(profile?.name || '', profile?.team || '', profile || {});
+  }
+  renderWho();
   route();
   if (state.cfg.accessCode && !state.cfg.codeOk) await askCode();
   if (!store.name()) await pickProfile(true);
 }
 
-async function loadTeams() {
-  if (state.teams) return state.teams;
-  try {
-    const r = await api.team();
-    state.teams = r.teams || [];
-    state.leaders = r.leaders || [];
-  } catch { state.teams = []; }
-  return state.teams;
-}
-
-// Выбор сотрудника: команда → имя. Можно ввести имя вручную. Отдельная вкладка — «Я руководитель».
 async function pickProfile(first) {
-  const all = await loadTeams();
-  const teams = all.filter((t) => t.members.length);
-  if (!teams.length) { await changeName(first); return; }
-  const cur = store.profile();
-  const leaders = state.leaders;
-  return new Promise((resolve) => {
-    const wrap = document.createElement('div');
-    wrap.className = 'modal-wrap';
-    let team = cur.role === 'leader' && leaders.length ? 'lead' : cur.team && teams.some((t) => t.id === cur.team) ? cur.team : teams[0].id;
-    const draw = () => {
-      const lead = team === 'lead';
-      const t = teams.find((x) => x.id === team);
-      wrap.innerHTML = `
-        <div class="modal pick" role="dialog" aria-modal="true" aria-labelledby="pick-title">
-          <h2 id="pick-title">${first ? 'Кто тренируется?' : 'Сменить сотрудника'}</h2>
-          <p class="muted">${lead ? 'Руководители видят аналитику команд и расходы. Понадобится код руководителя.' : 'Выберите команду и себя. Результаты попадут в аналитику руководителя.'}</p>
-          <div class="chips">${teams.map((x) => `<button type="button" class="chip ${x.id === team ? 'on' : ''}" data-team="${x.id}">${esc(x.name)}</button>`).join('')}
-            ${leaders.length ? `<button type="button" class="chip chip-lead ${lead ? 'on' : ''}" data-team="lead">Я руководитель</button>` : ''}</div>
-          ${lead
-            ? `<div class="people leaders">${leaders.map((l) => `<button type="button" class="person ${l.name === cur.name ? 'on' : ''}" data-lead="${esc(l.name)}"><b>${esc(l.name)}</b><span>${esc(l.title)}</span></button>`).join('')}</div>`
-            : `<div class="people">${t.members.map((m) => `<button type="button" class="person ${m === cur.name ? 'on' : ''}" data-name="${esc(m)}">${esc(m)}</button>`).join('')}</div>
-          <form class="other"><input type="text" name="v" placeholder="Нет в списке? Впишите имя и фамилию" autocomplete="off"><button class="btn btn-outline btn-sm" type="submit">Это я</button></form>`}
-          ${first ? '' : '<div class="modal-actions"><button type="button" class="btn btn-ghost" data-cancel>Отмена</button></div>'}
-        </div>`;
-      wrap.querySelectorAll('[data-team]').forEach((b) => b.addEventListener('click', () => { team = b.dataset.team; draw(); }));
-      wrap.querySelectorAll('[data-name]').forEach((b) => b.addEventListener('click', () => done(b.dataset.name, team)));
-      wrap.querySelectorAll('[data-lead]').forEach((b) => b.addEventListener('click', () => doneLeader(leaders.find((l) => l.name === b.dataset.lead))));
-      wrap.querySelector('.other')?.addEventListener('submit', (e) => { e.preventDefault(); const v = e.target.v.value.trim(); if (v) done(v, team); });
-      wrap.querySelector('[data-cancel]')?.addEventListener('click', () => { wrap.remove(); resolve(false); });
-    };
-    const done = (name, teamId) => { store.setProfile(name, teamId); renderWho(); wrap.remove(); resolve(true); };
-    const doneLeader = (l) => {
-      if (!l) return;
-      store.setProfile(l.name, l.teams[0] || '', { role: 'leader', teams: l.teams });
-      renderWho();
-      wrap.remove();
-      resolve(true);
-      location.hash = '#/analytics'; // код руководителя спросит страница аналитики
-    };
-    draw();
-    document.body.appendChild(wrap);
+  if (!state.cfg.staffLogin) return changeName(first);
+  const code = await promptModal({
+    title: 'Личный код сотрудника',
+    text: 'Личный код выдаёт руководитель. Он определяет ваш профиль и доступ.',
+    label: 'Код', type: 'password', submit: 'Войти',
   });
+  if (!code) return false;
+  try {
+    const { profile } = await api.login(code);
+    store.setProfile(profile.name, profile.team, profile);
+    renderWho();
+    if (profile.role === 'leader' && location.hash !== '#/analytics') location.hash = '#/analytics';
+    else route();
+    return true;
+  } catch (error) {
+    toast(error.message, 'error');
+    return false;
+  }
 }
 
 function renderWho() {
@@ -112,14 +84,14 @@ function renderWho() {
 async function changeName(first = false) {
   const v = await promptModal({
     title: first ? 'Как вас зовут?' : 'Сменить имя',
-    text: 'Имя видно только в истории тренировок на этом компьютере.',
+    text: 'Введите имя для личной истории на этом компьютере.',
     label: 'Имя и фамилия',
     value: store.name(),
-    placeholder: 'Например, Анна Петрова',
+    placeholder: 'Имя и фамилия',
     submit: 'Готово',
     cancel: !first,
   });
-  if (v) { store.setProfile(v, store.profile().team); renderWho(); }
+  if (v) { store.setProfile(v, store.profile().team); renderWho(); route(); }
 }
 
 async function askCode() {
@@ -145,10 +117,13 @@ function route() {
   if (state.speech && parts[0] !== 'call') { state.speech.stop(true); state.speech = null; }
   if (state.dict && parts[0] !== 'd') { state.dict.abort(); state.dict = null; }
   stopMicTest();
-  const navKey = ['history', 'analytics', 'admin'].includes(parts[0]) ? parts[0] : parts.length ? '' : 'home';
+  const navKey = ['history', 'analytics'].includes(parts[0]) ? parts[0] : parts.length ? '' : 'home';
   $$('.nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === navKey));
-  if (parts[0] === 'analytics') return leaderPage('analytics');
-  if (parts[0] === 'admin') return leaderPage('admin');
+  if (parts[0] === 'analytics' || parts[0] === 'admin') {
+    if (!store.isLeader()) return view(`<div class="empty"><h2>Аналитика для руководителей</h2><p class="muted">Выберите профиль руководителя для входа.</p></div>`);
+    if (parts[0] === 'admin') { location.hash = '#/analytics'; return; }
+    return leaderPage();
+  }
   if (parts[0] === 's' && parts[1]) return view(briefView(parts[1]), bindBrief);
   if (parts[0] === 'call') return state.session ? view(callView(), bindCall) : (location.hash = '#/');
   if (parts[0] === 'd') { if (!state.dict) { location.hash = '#/'; return; } window.scrollTo(0, 0); return state.dict.mount(app); }
@@ -173,7 +148,7 @@ function configNote() {
 
 // ---------- главная ----------
 function homeView() {
-  const types = [['all', 'Все'], ['objection', 'Возражения'], ['soft', 'Без претензии'], ['service', 'Сервис']];
+  const types = [['all', 'Все'], ['objection', 'Возражения'], ['soft', 'Без претензии'], ['service', 'Сервис'], ['routing', 'Выход на ЛПР']];
   const list = CATALOG.filter((s) => s.id !== 'random' && (state.filter === 'all' || s.type === state.filter));
   const random = findScenario('random');
   return `
@@ -181,29 +156,24 @@ function homeView() {
     <div>
       <p class="eyebrow">Голосовой тренажёр звонков</p>
       <h1 class="ext">Позвоните клиенту, который возражает как настоящий</h1>
-      <p class="lead">Клиента играет ИИ: голосом и фразами из реальных расшифровок звонков SuperJob. После звонка — разбор по четырём критериям и что тренировать.</p>
+      <p class="lead">Тренируйте звонки рекрутерам действующих клиентов. После звонка получите разбор и увидите, какой этап стоит отработать.</p>
       <div class="actions">
         <button class="btn btn-white btn-lg" data-scroll="catalog">Выбрать тренажёр</button>
         <a class="btn btn-line-white btn-lg" href="#/s/random">${icon('shuffle')} Случайный клиент</a>
       </div>
     </div>
-    <div class="kpis">
-      <div class="kpi"><b class="ext">224</b><span>звонка в анализе возражений</span></div>
-      <div class="kpi"><b class="ext">222</b><span>расшифровки — источник реплик клиента</span></div>
-      <div class="kpi"><b class="ext">${CATALOG.length}</b><span>тренажёров по частым ситуациям</span></div>
-    </div>
   </section>
   ${state.cfg.ready ? '' : `<div class="section">${configNote()}</div>`}
   <section class="section">
     <div class="steps">
-      ${step(1, 'Выберите ситуацию', 'Тренажёры собраны по самым частым возражениям из 224 звонков.')}
-      ${step(2, 'Позвоните голосом', 'Клиент снимает трубку и отвечает фразами из настоящих звонков. Перебивать можно.')}
-      ${step(3, 'Получите разбор', 'Оценка 0–4 по методике отдела, главная ошибка и как надо было сказать.')}
+      ${step(1, 'Выберите ситуацию', 'Разговор с рекрутером или поиск контакта ЛПР.')}
+      ${step(2, 'Поговорите с клиентом', 'Установите контакт и выясните потребность до предложения.')}
+      ${step(3, 'Получите разбор', 'Оценка по четырём критериям и пример удачной формулировки.')}
     </div>
   </section>
   <section class="section" id="catalog">
     <div class="section-head">
-      <div><h2>Тренажёры</h2><p class="muted">Сначала — самые частые возражения клиентов.</p></div>
+      <div><h2>Тренажёры</h2></div>
       <div class="chips" role="group" aria-label="Фильтр">${types.map(([k, n]) => `<button class="chip ${state.filter === k ? 'on' : ''}" data-filter="${k}">${n}</button>`).join('')}</div>
     </div>
     <div class="grid">
@@ -220,7 +190,7 @@ function step(n, title, text) {
 function card(s) {
   return `
   <a class="card ${s.id === 'random' ? 'random' : ''}" href="#/s/${s.id}">
-    <div class="row"><span class="tag">${esc(s.group)}</span><span class="share">${esc(s.shareLabel)}</span></div>
+    <div class="row"><span class="tag">${esc(s.group)}</span></div>
     <h3>${esc(s.title)}</h3>
     <p class="q">${icon('quote', 18)}<span>${esc(s.quote)}</span></p>
     <div class="meta"><span>${esc(s.who)}</span><span class="go">Позвонить ${icon('arrow', 18)}</span></div>
@@ -245,22 +215,22 @@ function briefView(id) {
   const isRandom = s.id === 'random';
   const levels = isRandom ? [{ id: 'auto', name: 'Случайно' }, ...LEVELS] : LEVELS;
   const level = levels.some((l) => l.id === prefs.level) ? prefs.level : isRandom ? 'auto' : 'medium';
-  const hint = LEVELS.find((l) => l.id === level)?.hint || 'Сложность выпадет по частотам из реальных звонков.';
+  const hint = LEVELS.find((l) => l.id === level)?.hint || 'Сложность выбирается автоматически.';
   const mode = ['voice', 'text', 'dictation'].includes(prefs.mode) ? prefs.mode : 'text';
   const dict = mode === 'dictation';
   const counts = [['6', '6 фраз'], ['10', '10 фраз'], ['all', 'Все']];
   const count = counts.some(([v]) => v === String(prefs.count)) ? String(prefs.count) : '6';
   const modeHint = {
-    text: 'Живой диалог: клиента играет ИИ по портрету из реальных звонков и отвечает на ваши слова текстом. Вы отвечаете голосом — браузер переводит речь в текст — или печатаете.',
+    text: 'ИИ играет собеседника и отвечает текстом. Реплику можно напечатать или продиктовать.',
     voice: freeVoice()
       ? 'Голос ИИ ещё в процессе подключения: скоро клиент заговорит с вами живым синтезированным голосом. Пока можно попробовать черновой вариант на голосе браузера — или тренироваться в «Диалоге» и «Фразах».'
       : 'Разговор голосом, как по телефону. Клиента играет ИИ.',
-    dictation: 'Разминка без ИИ: реальные фразы клиента по одной, вы отвечаете на каждую. Фразы не зависят от ваших ответов.',
+    dictation: 'Разминка: отвечайте на учебные реплики по одной. Фразы не зависят от ваших ответов.',
   }[mode];
   const sttTip = ['info', canDictate ? 'Распознавание речи работает в Chrome и Edge.' : 'В этом браузере нет распознавания речи: откройте Chrome или Edge либо нажмите Win + H для диктовки Windows.'];
   const tips = {
-    text: [['quote', 'У клиента легенда, возражения и фразы из расшифровок звонков. Он помнит, что вы сказали.'], ['mic', 'Нажмите на микрофон рядом с полем и говорите. Текст можно поправить перед отправкой.'], sttTip],
-    dictation: [['quote', 'Фразы — дословно из расшифровок звонков.'], ['ear', 'Отвечайте так, как сказали бы клиенту. Текст можно поправить.'], sttTip],
+    text: [['quote', 'Собеседник реагирует на предыдущие реплики и вопросы.'], ['mic', 'Нажмите на микрофон рядом с полем и говорите. Текст можно поправить перед отправкой.'], sttTip],
+    dictation: [['ear', 'Отвечайте так, как сказали бы клиенту. Текст можно поправить.'], sttTip],
     voice: freeVoice()
       ? [['ear', 'Дождитесь, пока клиент договорит: перебивать его в этом режиме нельзя.'], ['clock', 'Закончили фразу — помолчите 2 секунды, и она уйдёт клиенту. Или нажмите «Ответил».'], ['info', canBrowserVoice ? 'Живее всего звучит Edge: там голоса Microsoft. В Chrome — голос Google.' : 'В этом браузере нет голосового режима: откройте Chrome или Edge.']]
       : [['headset', 'Наденьте гарнитуру: так клиент не услышит сам себя из динамиков.'], ['ear', 'Говорите как в настоящем звонке. Клиента можно перебивать.'], ['clock', 'Обычно звонок длится 3–8 минут.']],
@@ -273,19 +243,18 @@ function briefView(id) {
   <a class="back" href="#/">${icon('back', 20)} Все тренажёры</a>
   <div class="brief">
     <div>
-      <div class="chips"><span class="tag">${esc(s.group)}</span><span class="tag tag-mint">${esc(s.shareLabel)}${s.shareNote ? ' · ' + esc(s.shareNote) : ''}</span><span class="tag">${esc(TYPES[s.type])}</span></div>
+      <div class="chips"><span class="tag">${esc(s.group)}</span><span class="tag">${esc(TYPES[s.type])}</span></div>
       <h1>${esc(s.title)}</h1>
       <p class="sub muted">На линии: ${esc(s.who)}</p>
       <div class="block"><h3>Что вы знаете до звонка</h3><p>${esc(s.context)}</p></div>
       <div class="block"><h3>Ваша цель</h3><p>${esc(s.goal)}</p></div>
       <div class="block"><h3>Как оценим</h3>
-        <ul class="lineup">${CRITERIA.map((c) => `<li><b>${esc(c.name)}</b><span>${esc(c.desc)}</span></li>`).join('')}</ul>
-        ${s.type === 'soft' ? '<p class="hint" style="margin-top:10px">Жалобы у клиента нет, поэтому первые три пункта засчитываются автоматически — всё решает шаг со сроком.</p>' : ''}
+        <ul class="lineup">${criteriaFor(s.id).map((c) => `<li><b>${esc(c.name)}</b><span>${esc(c.desc)}</span></li>`).join('')}</ul>
       </div>
       <div class="block quote-card">
         ${icon('quote', 28)}
         <p>«${esc(s.quote)}»</p>
-        <small>${isRandom ? 'Клиент выбирается по реальным частотам возражений.' : `Реальная фраза клиента. Сценарий собран по ${s.sources} ${plural(s.sources, 'расшифровке', 'расшифровкам', 'расшифровкам')} звонков.`}</small>
+        <small>Пример реплики</small>
       </div>
     </div>
     <aside class="panel" aria-label="Настройка звонка">
@@ -381,13 +350,10 @@ function stopMicTest() {
   if (el) el.style.width = '0';
 }
 
-function newSid() {
-  return crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
-}
-
 async function startDictation(id) {
   if (state.cfg.offline) { toast('Сайт открыт без серверной части', 'error'); return; }
   if (state.cfg.accessCode && !state.cfg.codeOk && !(await askCode())) return;
+  if (!store.name()) { await pickProfile(true); if (!store.name()) return; }
   stopMicTest();
   const btn = $('#startCall');
   if (btn) btn.disabled = true;
@@ -400,7 +366,7 @@ async function startDictation(id) {
     return;
   }
   const s = findScenario(id);
-  const sid = newSid();
+  const sid = newTrainingId();
   state.meta = { scenario: id, level: 'medium', mode: 'dictation', sid, startedAt: new Date().toISOString(), title: s.title };
   state.dict = new Dictation({ sid, trainer: id, data, onDone: (result) => { state.dict = null; endCall(result); } });
   location.hash = '#/d';
@@ -417,6 +383,7 @@ async function startCall(id, requestedMode = store.prefs().mode, previous = null
   if (!ok) { toast(textMode || lite ? 'ИИ для диалога не подключён' : 'Голос ещё не подключён', 'error'); return; }
   if (lite && !canBrowserVoice) { toast('Голосовой режим работает в Chrome и Edge. Откройте сайт в одном из них.', 'error'); return; }
   if (state.cfg.accessCode && !state.cfg.codeOk && !(await askCode())) return;
+  if (!store.name()) { await pickProfile(true); if (!store.name()) return; }
   stopMicTest();
   state.voiceIssue = null;
   const prefs = store.prefs();
@@ -425,7 +392,7 @@ async function startCall(id, requestedMode = store.prefs().mode, previous = null
   if (id === 'random') level = ['auto', 'easy', 'medium', 'hard'].includes(level) ? level : 'auto';
   else if (!['easy', 'medium', 'hard'].includes(level)) level = 'medium';
   const mode = textMode ? 'text' : 'voice';
-  const sid = previous?.sid || newSid();
+  const sid = previous?.sid || newTrainingId();
   state.meta = { scenario: id, level, mode, sid, startedAt: previous?.date || new Date().toISOString(), title: s.title, engine: lite ? 'browser' : mode === 'voice' ? 'realtime' : '', previous };
   state.subs = textMode || requestedMode === 'browser' || Boolean(prefs.subs);
   const handlers = {
@@ -592,6 +559,7 @@ function endCall(result) {
     interrupted: meta.mode === 'voice' && ['dropped', 'failed'].includes(result.reason),
     gender: result.resolved?.gender,
     name: store.name(),
+    owner: store.profileKey(),
     metrics: metrics(result.transcript, result.durationSec),
     answers: result.answers || null,
     eval: null,
@@ -705,7 +673,7 @@ function resultView(id) {
       ${metricsHtml}${transcriptHtml}${actions}`;
   }
 
-  const crit = CRITERIA.map((c) => {
+  const crit = criteriaFor(e.realScenario || e.scenario).map((c) => {
     const r = ev.criteria?.[c.key] || { score: 0 };
     const ok = r.score >= 1;
     return `<div class="crit-card ${ok ? 'ok' : ''}">

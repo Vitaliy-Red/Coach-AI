@@ -1,45 +1,15 @@
-// Состав команд и руководители — для выбора сотрудника при входе и для аналитики.
-// Источник: дашборд «Продажи СМБ — 2026» (ноябрь 2026). Меняйте здесь при приходе и уходе людей.
+// Список сотрудников хранится в секрете STAFF_CONFIG у Cloudflare.
+export function staffConfig(env) {
+  try {
+    const config = JSON.parse(env.STAFF_CONFIG || '{}');
+    return {
+      signingKey: typeof config.signingKey === 'string' ? config.signingKey : '',
+      teams: Array.isArray(config.teams) ? config.teams : [],
+      leaders: Array.isArray(config.leaders) ? config.leaders : [],
+    };
+  } catch { return { signingKey: '', teams: [], leaders: [] }; }
+}
 
-export const TEAMS = [
-  {
-    id: 'smb1',
-    name: 'СМБ 1',
-    lead: 'Наталья Ужегова',
-    members: ['Александр Михайличенко', 'Валерия Бароян', 'Ксения Виссарова', 'Мария Кононова', 'Вероника Бондаренко', 'Анна Петрова'],
-  },
-  {
-    id: 'smb2',
-    name: 'СМБ 2',
-    lead: 'Мария Голова',
-    members: ['Софья Мамцева', 'Дарья Дорохина', 'Евгений Колесников', 'Всеволод Сергунин', 'Артур Кочаров'],
-  },
-  {
-    id: 'warm',
-    name: 'Тёплые клиенты',
-    lead: 'Антон Шлепов',
-    members: ['Алексей Моисеев', 'Антон Назаров', 'Павел Чернов', 'Евгения Кузнецова'],
-  },
-  {
-    id: 'hunters',
-    name: 'Хантеры',
-    lead: 'Антон Шлепов',
-    members: [],
-  },
-];
-
-// Руководители входят через «Я руководитель» и видят вкладки «Аналитика» и «Руководитель».
-// teams — какие группы открываются в аналитике первыми; пустой список — все группы.
-export const LEADERS = [
-  { name: 'Виталий Краснянский', title: 'Руководитель направления', teams: [] },
-  { name: 'Наталья Ужегова', title: 'Руководитель группы СМБ 1', teams: ['smb1'] },
-  { name: 'Мария Голова', title: 'Руководитель группы СМБ 2', teams: ['smb2'] },
-  { name: 'Антон Шлепов', title: 'Руководитель группы Тёплые клиенты и Хантеры', teams: ['warm', 'hunters'] },
-];
-
-export function teamOf(name) {
-  for (const t of TEAMS) {
-    if (t.members.includes(name) || t.lead === name) return t.id;
-  }
-  return '';
+export function teamOf(env, name) {
+  return staffConfig(env).teams.find((team) => team.members.includes(name) || team.lead === name)?.id || '';
 }

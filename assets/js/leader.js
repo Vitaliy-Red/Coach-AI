@@ -1,33 +1,41 @@
-// Разделы руководителя: «Руководитель» (бюджет и расходы) и «Аналитика» (команды и сотрудники).
+// Аналитика по командам и сотрудникам.
 import { CRITERIA } from './catalog.js';
 import { api } from './api.js';
 import { store } from './store.js';
 import { esc, $, $$, icon, fmtTime, fmtDate, plural, toast, promptModal } from './ui.js';
 
-const LEVEL = { easy: 'Лёгкий', medium: 'Средний', hard: 'Трудный' };
 let teamFilter = null;
 let answersData = null;
 let trainerFilter = 'all';
+let activeProfile;
 
 const app = () => $('#app');
-const rub = (v, d = 2) => `${(Number(v) || 0).toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: d })} ₽`;
 const num = (v, d = 1) => (v === null || v === undefined ? '—' : Number(v).toLocaleString('ru-RU', { maximumFractionDigits: d }));
 
-export async function leaderPage(kind) {
-  app().innerHTML = `<div class="loader"><h1 class="ext" style="font-size:30px">${kind === 'admin' ? 'Руководитель' : 'Аналитика'}</h1><div class="dots"><i></i><i></i><i></i></div></div>`;
+export async function leaderPage() {
+  const requestProfile = store.profileKey();
+  if (activeProfile !== requestProfile) {
+    activeProfile = requestProfile;
+    teamFilter = null;
+    trainerFilter = 'all';
+  }
+  app().innerHTML = `<div class="loader"><h1 class="ext" style="font-size:30px">Аналитика</h1><div class="dots"><i></i><i></i><i></i></div></div>`;
   window.scrollTo(0, 0);
   let data;
   try {
-    data = await api.admin();
-    if (kind === 'analytics') answersData = await api.answers().catch(() => ({ answers: [] }));
+    data = await api.analytics();
+    const answers = await api.answers();
+    if (requestProfile === store.profileKey()) answersData = answers;
   } catch (e) {
+    if (location.hash !== '#/analytics' || requestProfile !== store.profileKey()) return;
     if (e.status === 401) {
       if (store.adminCode()) toast('Неверный код руководителя', 'error');
-      const code = await promptModal({ title: 'Код руководителя', text: 'Раздел для руководителя направления и руководителей групп. Код вводится один раз на этом компьютере.', label: 'Код', type: 'password', value: '', submit: 'Войти' });
-      if (code) { store.setAdminCode(code); return leaderPage(kind); }
+      const code = await promptModal({ title: 'Код руководителя', text: 'Раздел для руководителя направления и руководителей групп. При смене профиля код потребуется снова.', label: 'Код', type: 'password', value: '', submit: 'Войти' });
+      if (location.hash !== '#/analytics' || requestProfile !== store.profileKey()) return;
+      if (code) { store.setAdminCode(code); return leaderPage(); }
       store.setAdminCode('');
       app().innerHTML = `<div class="empty"><h2>Нужен код руководителя</h2><p class="muted">Код выдаёт руководитель направления.</p><br><button class="btn btn-primary" id="retryCode">Ввести код</button></div>`;
-      $('#retryCode')?.addEventListener('click', () => leaderPage(kind));
+      $('#retryCode')?.addEventListener('click', () => leaderPage());
       return;
     }
     if (e.status === 429) {
@@ -37,104 +45,20 @@ export async function leaderPage(kind) {
     app().innerHTML = `<div class="empty"><h2>Не удалось загрузить данные</h2><p class="muted">${esc(e.message)}</p></div>`;
     return;
   }
+  if (location.hash !== '#/analytics' || requestProfile !== store.profileKey()) return;
   if (teamFilter === null) {
     const mine = store.profile().teams || [];
     teamFilter = mine.length ? mine[0] : 'all';
   }
-  if (!location.hash.startsWith('#/' + kind)) return; // пользователь ушёл со страницы
-  app().innerHTML = (data.open ? openNote() : '') + (data.db ? '' : dbNote()) + (kind === 'admin' ? adminView(data) : analyticsView(data));
-  bind(kind, data);
+  app().innerHTML = (data.open ? openNote() : '') + (data.db ? '' : dbNote()) + analyticsView(data);
+  bind(data);
 }
 
 function openNote() {
   return `<div class="note" style="border-color:var(--red);margin-bottom:24px">${icon('info')}<p>Раздел сейчас открыт всем, у кого есть ссылка. Чтобы закрыть его кодом, добавьте в Cloudflare секрет <b>ADMIN_CODE</b>.</p></div>`;
 }
 function dbNote() {
-  return `<div class="note" style="margin-bottom:24px">${icon('info')}<p>База учёта не подключена: звонки работают, но расход и аналитика не сохраняются. Нужна привязка D1 с именем <b>DB</b> в настройках проекта.</p></div>`;
-}
-
-// ---------- Руководитель: бюджет и расходы ----------
-function adminView(d) {
-  const t = d.tariffs;
-  const used = d.budget > 0 ? Math.min(100, Math.round((100 * d.spent) / d.budget)) : 0;
-  const low = d.budget > 0 && d.remaining < d.budget * 0.15;
-  const maxDay = Math.max(1, ...d.days.map((x) => x.cost));
-  return `
-  <div class="section-head" style="margin-bottom:24px">
-    <div><h1 style="font-size:40px">Баланс и расходы</h1><p class="muted">Расход считает сайт по секундам звука и токенам с тарифами Yandex AI Studio. Точный остаток — в Yandex Cloud Billing.</p></div>
-    <a class="btn btn-outline" href="https://console.yandex.cloud/billing" target="_blank" rel="noopener">Открыть Yandex Billing</a>
-  </div>
-  <div class="stats">
-    <div class="kpi"><b class="ext">${rub(d.budget, 0)}</b><span>бюджет · <button class="linkbtn" id="editBudget">изменить</button></span></div>
-    <div class="kpi"><b class="ext">${rub(d.spent)}</b><span>израсходовано</span></div>
-    <div class="kpi ${low ? 'kpi-neg' : ''}"><b class="ext">${rub(d.remaining)}</b><span>осталось${low ? ' — пора пополнить или остановить' : ''}</span></div>
-  </div>
-  <div class="budget-bar" aria-label="Израсходовано ${used}%"><i style="width:${used}%"></i></div>
-  <p class="hint" style="margin-top:8px">Израсходовано ${used}% бюджета.</p>
-  ${freeAiBlock(d.textAi)}
-
-  <section class="section">
-    <div class="metrics">
-      <div class="metric"><b class="ext">${rub(d.perMinute)}</b><span>минута голосового звонка</span></div>
-      <div class="metric"><b class="ext">${rub(d.perCall)}</b><span>средняя тренировка с разбором</span></div>
-      <div class="metric"><b class="ext">${d.calls}</b><span>${plural(d.calls, 'тренировка', 'тренировки', 'тренировок')} всего</span></div>
-      <div class="metric"><b class="ext">${d.perCall > 0 ? Math.max(0, Math.floor(d.remaining / d.perCall)) : '—'}</b><span>тренировок хватит на остаток</span></div>
-    </div>
-  </section>
-
-  <section class="section two">
-    <div class="box">
-      <h2>Тарифы</h2>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Что</th><th>Цена</th><th>За минуту</th></tr></thead>
-        <tbody>
-          <tr><td>Голос менеджера (входящее аудио)</td><td>${rub(t.audioInSec, 4)} / сек</td><td>${rub(t.audioInSec * 60)}</td></tr>
-          <tr><td>Голос клиента (исходящее аудио)</td><td>${rub(t.audioOutSec, 4)} / сек</td><td>${rub(t.audioOutSec * 60)}</td></tr>
-          <tr><td>Модель голоса: входящие токены</td><td>${rub(t.rtIn1k, 3)} / 1000</td><td>—</td></tr>
-          <tr><td>Модель голоса: повторные (кеш)</td><td>${rub(t.rtCached1k, 3)} / 1000</td><td>—</td></tr>
-          <tr><td>Модель голоса: исходящие токены</td><td>${rub(t.rtOut1k, 3)} / 1000</td><td>—</td></tr>
-          <tr><td>Разбор и текстовый режим (YandexGPT)</td><td>${rub(t.llmIn1k, 3)} / 1000</td><td>—</td></tr>
-        </tbody>
-      </table></div>
-      <p class="hint" style="margin-top:10px">Цены с НДС, по странице тарифов Yandex AI Studio. Микрофон менеджера тарифицируется всё время звонка.</p>
-    </div>
-    <div class="box">
-      <h2>Расход по дням</h2>
-      ${d.days.length ? `<div class="bars">${d.days.slice(-14).map((x) => `
-        <div class="bar-row day-row"><span>${esc(x.day.slice(8, 10) + '.' + x.day.slice(5, 7))} · ${x.calls} ${plural(x.calls, 'звонок', 'звонка', 'звонков')}</span><div class="bar-track" aria-hidden="true"><i style="width:${Math.max(2, Math.round((100 * x.cost) / maxDay))}%"></i></div><b>${rub(x.cost, 0)}</b></div>`).join('')}</div>`
-        : '<p class="muted">Звонков пока не было.</p>'}
-    </div>
-  </section>
-
-  <section class="section">
-    <h2 style="font-size:24px;margin-bottom:14px">Последние тренировки</h2>
-    ${d.sessions.length ? `<div class="table-wrap"><table>
-      <thead><tr><th>Дата</th><th>Сотрудник</th><th>Тренажёр</th><th>Режим</th><th>Длительность</th><th>Стоимость</th><th>Балл</th></tr></thead>
-      <tbody>${d.sessions.map((r) => `<tr>
-        <td>${esc(fmtDate(r.at))}</td>
-        <td>${esc(r.manager || '—')}<span class="t">${esc(teamName(d, r.team))}</span></td>
-        <td>${esc(r.trainer)}${r.real ? `<span class="t">${esc(r.real)}</span>` : ''}</td>
-        <td>${r.mode === 'text' ? 'Диалог' : r.mode === 'dictation' ? 'Фразы' : 'Голос'}</td>
-        <td>${fmtTime(r.duration)}</td>
-        <td>${rub(r.cost)}</td>
-        <td>${r.score === null || r.score === undefined ? '—' : `<b>${r.score}</b> / 4`}</td></tr>`).join('')}</tbody>
-    </table></div>` : '<p class="muted">Пока пусто.</p>'}
-  </section>`;
-}
-
-// Бесплатный ИИ Cloudflare для диалога и разбора: дневной лимит нейронов.
-function freeAiBlock(ai) {
-  if (!ai || !ai.free) return '';
-  const pct = Math.min(100, Math.round((100 * ai.usedToday) / ai.limit));
-  const left = Math.max(0, ai.limit - ai.usedToday);
-  const short = (m) => String(m || '').replace(/^@cf\/[^/]+\//, '');
-  return `
-  <section class="section box">
-    <h2>Бесплатный ИИ для диалога и разбора</h2>
-    <p class="muted">Открытые модели Cloudflare Workers AI: диалог — ${esc(short(ai.model))}, разбор — ${esc(short(ai.evalModel))}. Денег не списывает: после дневного лимита диалог останавливается до 03:00 по Москве.</p>
-    <div class="budget-bar" aria-label="Использовано ${pct}% лимита"><i style="width:${pct}%"></i></div>
-    <p class="hint" style="margin-top:8px">Сегодня ${ai.usedToday.toLocaleString('ru-RU')} из ${ai.limit.toLocaleString('ru-RU')} нейронов${ai.perTraining ? ` · одна тренировка ≈ ${ai.perTraining.toLocaleString('ru-RU')} · хватит ещё примерно на ${Math.floor(left / ai.perTraining)}` : ''}.</p>
-  </section>`;
+  return `<div class="note" style="margin-bottom:24px">${icon('info')}<p>База учёта не подключена: тренировки работают, но аналитика не сохраняется. Нужна привязка D1 с именем <b>DB</b> в настройках проекта.</p></div>`;
 }
 
 // ---------- Аналитика: команды и сотрудники ----------
@@ -239,30 +163,21 @@ function answersCsv(d) {
   const csv = '\ufeff' + rows.map((r) => r.map((v) => `"${String(v ?? '').replaceAll('"', '""')}"`).join(';')).join('\n');
   const el = document.createElement('a');
   el.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-  el.download = 'coach-ai-answers.csv';
+  el.download = 'red-coach-answers.csv';
   el.click();
   setTimeout(() => URL.revokeObjectURL(el.href), 1000);
 }
 
-function bind(kind, data) {
+function bind(data) {
   const redraw = () => {
     const y = window.scrollY;
     app().innerHTML = (data.open ? openNote() : '') + (data.db ? '' : dbNote()) + analyticsView(data);
-    bind(kind, data);
+    bind(data);
     window.scrollTo(0, y);
   };
   $$('[data-team]').forEach((b) => b.addEventListener('click', () => { teamFilter = b.dataset.team; redraw(); }));
   $$('[data-trainer]').forEach((b) => b.addEventListener('click', () => { trainerFilter = b.dataset.trainer; redraw(); }));
   $('#answersCsv')?.addEventListener('click', () => answersCsv(data));
-  $('#editBudget')?.addEventListener('click', async () => {
-    const v = await promptModal({ title: 'Бюджет на тренировки', text: 'Например, стартовый грант Yandex Cloud — 4 000 ₽.', label: 'Сумма, ₽', value: String(data.budget), submit: 'Сохранить' });
-    if (!v) return;
-    try {
-      await api.setBudget(Number(String(v).replace(/[^\d.,]/g, '').replace(',', '.')));
-      toast('Бюджет сохранён');
-      leaderPage(kind);
-    } catch (e) { toast(e.message, 'error'); }
-  });
 }
 
 function teamName(d, id) { return d.roster.find((t) => t.id === id)?.name || ''; }

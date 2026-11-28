@@ -40,12 +40,11 @@ export const api = {
   },
   chat(body) { return call('/api/chat', { method: 'POST', body: { ...who(), ...body } }); },
   evaluate(body) { return call('/api/evaluate', { method: 'POST', body: { ...who(), ...body } }); },
-  team() { return call('/api/team'); },
-  admin() { return call('/api/admin', { admin: true }); },
+  login(code) { return call('/api/profile', { method: 'POST', body: { code } }); },
+  analytics() { return call('/api/analytics', { admin: true }); },
   answers() { return call('/api/answers', { admin: true }); },
   dictation(scenario, count) { return call(`/api/dictation?${new URLSearchParams({ scenario, count })}`); },
   saveAnswer(body) { return call('/api/dictation', { method: 'POST', body: { ...who(), ...body } }); },
-  setBudget(budget) { return call('/api/admin', { method: 'POST', body: { budget }, admin: true }); },
   realtimeUrl({ scenario, level, sid }) {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const q = new URLSearchParams({ scenario, level, sid: sid || '', code: store.code(), ...who() });

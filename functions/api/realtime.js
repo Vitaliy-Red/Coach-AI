@@ -2,9 +2,8 @@ import { providerConfig, sessionConfig } from '../_lib/provider.js';
 import { checkAccess } from '../_lib/http.js';
 import { buildClientPrompt, resolveScenario, resolveGender, END_CALL_TOOL, scenarioExists } from '../_lib/prompt.js';
 import { PRIVATE } from '../_lib/private.js';
-import { addUsage } from '../_lib/usage.js';
-import { teamOf } from '../_lib/team.js';
 import { openGeminiBridge } from '../_lib/gemini-bridge.js';
+import { currentStaff, staffAuthEnabled } from '../_lib/staff-auth.js';
 
 // GET /api/realtime?scenario=hh&level=medium&code=... (WebSocket)
 // Реле между браузером и голосовым сервисом (протокол OpenAI Realtime; его же поддерживает Yandex AI Studio).
@@ -41,6 +40,8 @@ export async function onRequest(context) {
 
   const run = async () => {
     if (!checkAccess(request, env)) return fatal('access', 'Неверный код команды');
+    if (staffAuthEnabled(env) && !await currentStaff(request, env))
+      return fatal('staff', 'Выберите свой профиль и войдите с личным кодом.');
     const cfg = providerConfig(env);
     if (!cfg.ok) return fatal('config', 'Голос не подключён: нет ' + cfg.missing.join(', '));
     const reqId = url.searchParams.get('scenario') || '';
@@ -92,22 +93,9 @@ export async function onRequest(context) {
     let sessionOk = false;
     let limitTimer = 0;
     let greetTimer = 0;
-    // Учёт расхода: байты звука в обе стороны и токены модели из response.done.
-    const started = Date.now();
-    const use = { inBytes: 0, outBytes: 0, rtIn: 0, rtCached: 0, rtOut: 0 };
-    const manager = (url.searchParams.get('manager') || '').slice(0, 80);
-    const meta = { manager, team: url.searchParams.get('team') || teamOf(manager), scenario: reqId, realScenario: resolved.id, level: resolved.level, mode: 'voice' };
-    const bytesPerSec = 2 * cfg.realtime.rate;
-    const writeUsage = () => context.waitUntil(addUsage(env, sid, meta, {
-      durationSec: (Date.now() - started) / 1000,
-      audioIn: use.inBytes / bytesPerSec,
-      audioOut: use.outBytes / bytesPerSec,
-      rtIn: use.rtIn, rtCached: use.rtCached, rtOut: use.rtOut,
-    }));
     const closeAll = (code = 1000, reason = '') => {
       if (closed) return;
       closed = true;
-      writeUsage();
       clearTimeout(limitTimer);
       clearTimeout(greetTimer);
       try { upstream.close(code, reason); } catch {}
@@ -142,17 +130,7 @@ export async function onRequest(context) {
       if (typeof data !== 'string') { toClient(data); return; }
       // Аудио пересылаем без разбора JSON — это экономит время процессора.
       const head = data.slice(0, 160);
-      if (head.includes('output_audio.delta"') || head.includes('"response.audio.delta"')) {
-        use.outBytes += Math.max(0, data.length - 160) * 0.75;
-      } else if (head.includes('"response.done"')) {
-        try {
-          const u = JSON.parse(data).response?.usage || {};
-          const cached = Number(u.input_token_details?.cached_tokens || u.cached_tokens || 0);
-          use.rtCached += cached;
-          use.rtIn += Math.max(0, Number(u.input_tokens || 0) - cached);
-          use.rtOut += Number(u.output_tokens || 0);
-        } catch {}
-      } else if (data.length < 200_000 && head.includes('"session.')) {
+      if (data.length < 200_000 && head.includes('"session.')) {
         try {
           const obj = JSON.parse(data);
           if (obj.session) { delete obj.session.instructions; delete obj.session.tools; }
@@ -174,7 +152,6 @@ export async function onRequest(context) {
       const data = ev.data;
       if (typeof data !== 'string') return;
       if (data.startsWith('{"type":"input_audio_buffer.append"')) {
-        use.inBytes += Math.max(0, data.length - 46) * 0.75;
         try { upstream.send(data); } catch {}
         return;
       }

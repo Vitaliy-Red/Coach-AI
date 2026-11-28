@@ -1,6 +1,6 @@
 // Не отдаём наружу служебные файлы (исходники функций, документацию, README),
 // даже если папка сайта совпадает с корнем репозитория.
-const BLOCKED = [/^\/functions(\/|$)/i, /^\/docs(\/|$)/i, /^\/readme\.md$/i, /^\/\.git/i];
+const BLOCKED = [/^\/(functions|docs|tests)(\/|$)/i, /^\/readme\.md$/i, /^\/\.git/i];
 
 export async function onRequest({ request, next }) {
   const { pathname } = new URL(request.url);
