@@ -77,3 +77,36 @@ test('the dialogue continues the previous scenario, duration and transcript with
     assert.ok(session.now() >= 42);
   } finally { session.hangup(); api.chat = original; }
 });
+
+test('both recognizers listen to the microphone selected for the call, including after unmuting', async () => {
+  const starts = [];
+  class Recognizer {
+    start(track) { starts.push(track); }
+    stop() { this.onend?.(); }
+  }
+  const savedWindow = globalThis.window;
+  globalThis.window = { SpeechRecognition: Recognizer };
+  const track = { kind: 'audio', readyState: 'live' };
+  const stream = { getAudioTracks: () => [track] };
+  try {
+    const { BrowserVoiceCall } = await import('../assets/js/browservoice.js');
+    const backup = new BrowserVoiceCall({ scenario: 'hh' });
+    backup.stream = stream;
+    backup.listen();
+    backup.setMuted(true);
+    backup.setMuted(false);
+    backup.closeRec();
+
+    const realtime = new VoiceCall({ scenario: 'hh' });
+    realtime.stream = stream;
+    realtime.setMuted(true);
+    realtime.startBrowserStt();
+    assert.deepEqual(starts, [track, track]);
+    realtime.setMuted(false);
+    realtime.rec.onend();
+    assert.deepEqual(starts, [track, track, track, track]);
+  } finally {
+    if (savedWindow === undefined) delete globalThis.window;
+    else globalThis.window = savedWindow;
+  }
+});

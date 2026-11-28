@@ -211,7 +211,11 @@ export class BrowserVoiceCall {
       else this.rec = null;
     };
     this.rec = rec;
-    try { rec.start(); } catch {}
+    try { rec.start(this.stream.getAudioTracks()[0]); }
+    catch {
+      this.closeRec();
+      this.state('listening', 'Распознавание речи недоступно. Введите ответ ниже.');
+    }
   }
 
   closeRec() {
